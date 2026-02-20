@@ -5,7 +5,7 @@ import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { theme } from "@/constants/theme";
 import { getCachedOrder } from "@/lib/orderStore";
-import { PrimaryButton } from "@/components/PrimaryButton";
+import { orderActionsClient } from "@/services/orderActionsClient";
 
 type OrderLine = {
   name: string;
@@ -254,14 +254,21 @@ export default function OrderDetailScreen() {
   const date = cached?.date ?? (typeof params.date === "string" ? params.date : new Date().toISOString());
   const startDate = cached?.startDate ?? (typeof params.startDate === "string" ? params.startDate : null);
   const [validatedAt, setValidatedAt] = React.useState<string | null>(null);
+  const [refundedAt, setRefundedAt] = React.useState<string | null>(null);
+  const [selectedItemIndex, setSelectedItemIndex] = React.useState<number | null>(null);
+  const [itemActionMessage, setItemActionMessage] = React.useState<string | null>(null);
   const [rawOpen, setRawOpen] = React.useState(false);
+  const [actionLoading, setActionLoading] = React.useState<null | "validate-order" | "refund-order" | "validate-item" | "refund-item">(null);
   const productLines = React.useMemo(() => extractOrderLines(cached?.raw), [cached?.raw]);
   const totals = React.useMemo(() => extractOrderTotals(cached?.raw), [cached?.raw]);
   const normalizedStatus = status.toLowerCase();
-  const canValidate = ["completed", "valid"].includes(normalizedStatus) && !validatedAt;
+  const canValidate = ["completed", "valid"].includes(normalizedStatus) && !validatedAt && !refundedAt;
+  const canRefund = ["completed", "valid"].includes(normalizedStatus) && !refundedAt;
   const blockedReason =
     validatedAt
       ? "Order already validated"
+      : refundedAt
+        ? "Order already refunded"
       : normalizedStatus === "canceled"
         ? "Canceled orders cannot be validated"
         : normalizedStatus === "void"
@@ -298,7 +305,8 @@ export default function OrderDetailScreen() {
 
   return (
     <AppShell title="Order Detail">
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <View style={styles.screen}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         <Pressable style={styles.back} onPress={() => router.back()}>
           <Text style={styles.backLabel}>Back to orders</Text>
         </Pressable>
@@ -320,30 +328,65 @@ export default function OrderDetailScreen() {
         </View>
         {productLines.length ? (
           productLines.map((line, index) => (
-            <View key={`${line.name}-${index}`} style={styles.productCard}>
+            <Pressable
+              key={`${line.name}-${index}`}
+              style={[styles.productCard, selectedItemIndex === index ? styles.productCardSelected : null]}
+              onPress={() => setSelectedItemIndex((prev) => (prev === index ? null : index))}
+            >
               {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
               <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
               <Text style={styles.productRow}>{`Person: ${(line.firstName || line.lastName) ? `${line.firstName ?? "-"} ${line.lastName ?? "-"}` : "-"}`}</Text>
               <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
               <Text style={styles.productRow}>{`Start Date: ${line.startDate ? new Date(line.startDate).toLocaleString() : "-"}`}</Text>
-            </View>
+              {selectedItemIndex === index ? (
+                <View style={styles.itemActions}>
+                  <Pressable
+                    style={[styles.itemButton, styles.itemButtonRefund, actionLoading === "refund-item" ? styles.bottomDisabled : null]}
+                    disabled={actionLoading !== null}
+                    onPress={async () => {
+                      try {
+                        setActionLoading("refund-item");
+                        await orderActionsClient.refundOrderItem(id, { itemIndex: index, itemName: line.name });
+                        setItemActionMessage(`Item refunded: ${line.name}`);
+                      } catch (error) {
+                        setItemActionMessage(error instanceof Error ? error.message : "Refund item API not ready.");
+                      } finally {
+                        setActionLoading(null);
+                      }
+                    }}
+                  >
+                    <Text style={styles.itemButtonLabel}>{actionLoading === "refund-item" ? "Refunding..." : "Refund Item"}</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.itemButton, styles.itemButtonValidate, actionLoading === "validate-item" ? styles.bottomDisabled : null]}
+                    disabled={actionLoading !== null}
+                    onPress={async () => {
+                      try {
+                        setActionLoading("validate-item");
+                        await orderActionsClient.validateOrderItem(id, { itemIndex: index, itemName: line.name });
+                        setItemActionMessage(`Item validated: ${line.name}`);
+                      } catch (error) {
+                        setItemActionMessage(error instanceof Error ? error.message : "Validate item API not ready.");
+                      } finally {
+                        setActionLoading(null);
+                      }
+                    }}
+                  >
+                    <Text style={styles.itemButtonLabel}>{actionLoading === "validate-item" ? "Validating..." : "Validate Item"}</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </Pressable>
           ))
         ) : (
           <Card title={product} subtitle={`Quantity: ${quantity}\nAmount: ${formattedTotal}`} />
         )}
         <View style={styles.validateWrap}>
-          <PrimaryButton
-            label={validatedAt ? "Validated" : "Validate Order"}
-            disabled={!canValidate}
-            onPress={() => {
-              if (!canValidate) return;
-              setValidatedAt(new Date().toISOString());
-            }}
-          />
           <Text style={[styles.validateNote, blockedReason ? styles.validateBlocked : styles.validateAllowed]}>
-            {blockedReason ?? "This order can be validated."}
+            {itemActionMessage ?? blockedReason ?? "Tap an item to show item actions."}
           </Text>
           {validatedAt ? <Text style={styles.validatedAt}>Validated at {new Date(validatedAt).toLocaleString()}</Text> : null}
+          {refundedAt ? <Text style={styles.validatedAt}>Refunded at {new Date(refundedAt).toLocaleString()}</Text> : null}
         </View>
 
         {cached?.raw ? (
@@ -356,6 +399,49 @@ export default function OrderDetailScreen() {
           </View>
         ) : null}
       </ScrollView>
+      <View style={styles.bottomBar}>
+        <Pressable
+          style={[styles.bottomButton, styles.bottomRefund, !canRefund || actionLoading !== null ? styles.bottomDisabled : null]}
+          disabled={!canRefund || actionLoading !== null}
+          onPress={async () => {
+            try {
+              setActionLoading("refund-order");
+              await orderActionsClient.refundOrder(id);
+              setRefundedAt(new Date().toISOString());
+              setItemActionMessage("Order refunded");
+            } catch (error) {
+              setItemActionMessage(error instanceof Error ? error.message : "Refund API not ready.");
+            } finally {
+              setActionLoading(null);
+            }
+          }}
+        >
+          <Text style={styles.bottomButtonLabel}>
+            {actionLoading === "refund-order" ? "Refunding..." : refundedAt ? "Refunded" : "Refund"}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.bottomButton, styles.bottomValidate, !canValidate || actionLoading !== null ? styles.bottomDisabled : null]}
+          disabled={!canValidate || actionLoading !== null}
+          onPress={async () => {
+            try {
+              setActionLoading("validate-order");
+              await orderActionsClient.validateOrder(id);
+              setValidatedAt(new Date().toISOString());
+              setItemActionMessage("Order validated");
+            } catch (error) {
+              setItemActionMessage(error instanceof Error ? error.message : "Validate API not ready.");
+            } finally {
+              setActionLoading(null);
+            }
+          }}
+        >
+          <Text style={styles.bottomButtonLabel}>
+            {actionLoading === "validate-order" ? "Validating..." : validatedAt ? "Validated" : "Validate"}
+          </Text>
+        </Pressable>
+      </View>
+      </View>
     </AppShell>
   );
 }
@@ -456,6 +542,10 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: "#fff"
   },
+  productCardSelected: {
+    borderColor: "#fcb4e0",
+    backgroundColor: "#fff8fc"
+  },
   productImage: {
     width: "100%",
     height: 120,
@@ -471,6 +561,66 @@ const styles = StyleSheet.create({
   productRow: {
     color: theme.colors.text,
     marginBottom: 3
+  },
+  itemActions: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 8
+  },
+  itemButton: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 9,
+    alignItems: "center"
+  },
+  itemButtonRefund: {
+    backgroundColor: "#fee2e2"
+  },
+  itemButtonValidate: {
+    backgroundColor: "#dcfce7"
+  },
+  itemButtonLabel: {
+    fontWeight: "700",
+    color: "#1f2937"
+  },
+  screen: {
+    flex: 1
+  },
+  scrollContent: {
+    paddingBottom: 96
+  },
+  bottomBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+    backgroundColor: "#fff",
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+    flexDirection: "row",
+    gap: 10
+  },
+  bottomButton: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center"
+  },
+  bottomRefund: {
+    backgroundColor: "#fecaca"
+  },
+  bottomValidate: {
+    backgroundColor: "#bbf7d0"
+  },
+  bottomDisabled: {
+    opacity: 0.55
+  },
+  bottomButtonLabel: {
+    fontWeight: "800",
+    color: "#1f2937"
   },
   accordionWrap: {
     marginBottom: 12

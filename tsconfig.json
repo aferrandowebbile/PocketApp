@@ -3,20 +3,22 @@
   "compilerOptions": {
     "strict": true,
     "baseUrl": ".",
+    "resolveJsonModule": true,
     "paths": {
       "@/*": [
         "src/*"
       ]
     },
     "types": [
-      "jest",
       "react",
-      "react-native"
+      "react-native",
+      "nativewind/types"
     ]
   },
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    "**/*.d.ts",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
   ]

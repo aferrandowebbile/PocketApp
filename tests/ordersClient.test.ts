@@ -64,4 +64,22 @@ describe("parseOrdersResponse", () => {
       date: "2026-02-19"
     });
   });
+
+  it("prefers completed_at over completed_at_day (including attributes)", () => {
+    const payload = {
+      orders: [
+        {
+          id: "ord_3",
+          customer_name: "Alex Ray",
+          product_name: "Pass",
+          completed_at_day: "2026-02-20",
+          attributes: [{ key: "completed_at", value: "2026-02-20T15:42:10Z" }]
+        }
+      ]
+    };
+
+    const result = parseOrdersResponse(payload);
+    expect(result).toHaveLength(1);
+    expect(result[0].date).toBe("2026-02-20T15:42:10Z");
+  });
 });

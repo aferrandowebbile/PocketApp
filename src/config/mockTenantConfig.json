@@ -1,0 +1,130 @@
+{
+  "tenantId": "alpine-demo",
+  "name": "Alpine Experiences",
+  "theme": {
+    "primary": "#1D4ED8",
+    "secondary": "#0EA5E9"
+  },
+  "enabledModules": {
+    "ski": true,
+    "park": true,
+    "offers": true,
+    "events": true,
+    "commerce": false
+  },
+  "supportedLanguages": ["en", "es", "fr", "de", "ar", "ja", "zh"],
+  "homePage": {
+    "schemaVersion": 1,
+    "title": "Guest Home",
+    "sections": [
+      {
+        "id": "hero-main",
+        "type": "hero",
+        "props": {
+          "title": "Good morning, explore your day",
+          "subtitle": "Lift access, wait times, shows and curated experiences.",
+          "ctaLabel": "View today",
+          "ctaRoute": "/event/today",
+          "gradient": ["#1D4ED8", "#0EA5E9"]
+        }
+      },
+      {
+        "id": "quick-actions",
+        "type": "quickActions",
+        "props": {
+          "title": "Quick actions",
+          "actions": [
+            {
+              "id": "lift",
+              "label": "Lift status",
+              "icon": "mountain",
+              "route": "/poi/lifts",
+              "module": "ski"
+            },
+            {
+              "id": "slopes",
+              "label": "Slopes",
+              "icon": "flag",
+              "route": "/poi/slopes",
+              "module": "ski"
+            },
+            {
+              "id": "wait",
+              "label": "Wait times",
+              "icon": "timer",
+              "route": "/poi/wait-times",
+              "module": "park"
+            },
+            {
+              "id": "shows",
+              "label": "Shows",
+              "icon": "ticket",
+              "route": "/event/shows",
+              "module": "park"
+            }
+          ]
+        }
+      },
+      {
+        "id": "module-highlights",
+        "type": "infoBanner",
+        "props": {
+          "title": "Today at the resort",
+          "message": "Snow quality and ride queue snapshots update every 15 minutes.",
+          "variant": "moduleHighlights"
+        }
+      },
+      {
+        "id": "offers-carousel",
+        "type": "cardCarousel",
+        "props": {
+          "title": "Featured offers",
+          "items": [
+            {
+              "id": "offer-1",
+              "title": "Sunrise Gondola",
+              "subtitle": "20% off before 10:00",
+              "route": "/offer/offer-1"
+            },
+            {
+              "id": "offer-2",
+              "title": "Family FastPass",
+              "subtitle": "Skip select lines today",
+              "route": "/offer/offer-2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "today-list",
+        "type": "list",
+        "props": {
+          "title": "Today at the resort/park",
+          "items": [
+            {
+              "id": "event-1",
+              "title": "Avalanche Safety Intro",
+              "subtitle": "10:30 · Base Camp",
+              "route": "/event/event-1"
+            },
+            {
+              "id": "event-2",
+              "title": "Parade on Main Street",
+              "subtitle": "14:00 · Park Plaza",
+              "route": "/event/event-2"
+            }
+          ]
+        }
+      },
+      {
+        "id": "web-conditions",
+        "type": "webEmbed",
+        "props": {
+          "title": "Live conditions",
+          "url": "https://www.example.com/conditions",
+          "buttonLabel": "Open live dashboard"
+        }
+      }
+    ]
+  }
+}

@@ -37,6 +37,7 @@ Copy `.env.example` to `.env` and set:
 - `EXPO_PUBLIC_ORDERS_API_SORT` (default `completed_at_day:desc`)
 - `EXPO_PUBLIC_ORDERS_API_MODE` (default `partial`)
 - `EXPO_PUBLIC_ORDERS_API_STATUS` (default `completed,canceled`)
+- `EXPO_PUBLIC_ORDER_ACTIONS_API_BASE_URL` (optional for Order Detail actions: validate/refund order and items)
 - `EXPO_PUBLIC_ENABLE_ADMIN_COMMERCE` (default `false`)
 - `EXPO_PUBLIC_VALIDATION_COOLDOWN_MINUTES` (default `5`)
 

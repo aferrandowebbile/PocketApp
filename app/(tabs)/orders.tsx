@@ -52,6 +52,13 @@ function formatPrice(value: number | null, currency: string | null): string {
   return value.toFixed(2);
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "-";
+  return parsed.toLocaleString();
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
   return value as Record<string, unknown>;
@@ -214,8 +221,8 @@ export default function OrdersScreen() {
             >
               <Text style={styles.heroOrderId}>#{order.id}</Text>
               <Text style={styles.heroGuest}>{order.guestName}</Text>
-              <Text style={styles.heroDate}>Purchase: {new Date(order.date).toLocaleString()}</Text>
-              <Text style={styles.heroDate}>Start date: {order.startDate ? new Date(order.startDate).toLocaleString() : "-"}</Text>
+              <Text style={styles.heroDate}>Purchase: {formatDate(order.date)}</Text>
+              <Text style={styles.heroDate}>Start date: {formatDate(order.startDate)}</Text>
               <Text style={styles.heroMeta}>{`Quantity: ${cardNumProducts}`}</Text>
               <Text style={styles.heroMeta}>{`Price: ${cardPrice}`}</Text>
               <View style={styles.heroBadge}>

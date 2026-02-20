@@ -106,6 +106,97 @@ function pickNumberFromNested(record: Record<string, unknown>, paths: string[][]
   return null;
 }
 
+function asIsoDate(value: unknown): string | null {
+  const objectValue = asRecord(value);
+  if (objectValue) {
+    const day =
+      pickString(objectValue, ["day", "date"]) ??
+      null;
+    const hour =
+      pickString(objectValue, ["hour", "time"]) ??
+      "00:00:00";
+
+    if (day) {
+      const normalizedHour = /^\d{2}:\d{2}$/.test(hour) ? `${hour}:00` : hour;
+      const combined = `${day}T${normalizedHour}`;
+      const parsedCombined = new Date(combined);
+      if (!Number.isNaN(parsedCombined.getTime())) return parsedCombined.toISOString();
+
+      const parsedDay = new Date(day);
+      if (!Number.isNaN(parsedDay.getTime())) return parsedDay.toISOString();
+    }
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return value;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Handle seconds or milliseconds epoch.
+    const millis = value < 1_000_000_000_000 ? value * 1000 : value;
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+
+  return null;
+}
+
+function normalizeAttrKey(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function pickDateFromRecord(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const iso = asIsoDate(record[key]);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function pickDateFromNested(record: Record<string, unknown>, paths: string[][]): string | null {
+  for (const path of paths) {
+    let current: unknown = record;
+    for (const key of path) {
+      const next = asRecord(current);
+      if (!next) {
+        current = null;
+        break;
+      }
+      current = next[key];
+    }
+    const iso = asIsoDate(current);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function pickDateFromAttributes(attributes: unknown, wantedKeys: string[]): string | null {
+  if (!Array.isArray(attributes)) return null;
+  const targets = new Set(wantedKeys.map((key) => normalizeAttrKey(key)));
+
+  for (const item of attributes) {
+    const row = asRecord(item);
+    if (!row) continue;
+    const key = normalizeAttrKey(pickString(row, ["name", "key", "label", "field"]) ?? "");
+    if (!targets.has(key)) continue;
+
+    const valueObj = asRecord(row.value);
+    const direct =
+      asIsoDate(row.value) ??
+      asIsoDate(row.text) ??
+      asIsoDate(row.answer) ??
+      (valueObj ? asIsoDate(valueObj.value) : null) ??
+      (valueObj ? asIsoDate(valueObj.date) : null) ??
+      (valueObj ? asIsoDate(valueObj.datetime) : null) ??
+      (valueObj ? asIsoDate(valueObj.completed_at) : null);
+
+    if (direct) return direct;
+  }
+
+  return null;
+}
+
 function mapOrder(item: unknown): RemoteOrder | null {
   const row = asRecord(item);
   if (!row) return null;
@@ -178,28 +269,20 @@ function mapOrder(item: unknown): RemoteOrder | null {
     pickStringFromNested(row, [["payment", "currency"], ["totals", "currency"], ["pricing", "currency"], ["price", "currency"]]);
   const status = pickString(row, ["status", "state", "order_status", "orderStatus"]) ?? "unknown";
   const date =
-    pickString(row, [
-      "completed_at_day",
-      "completedAtDay",
+    pickDateFromRecord(row, [
       "completed_at",
       "completedAt",
-      "purchased_at",
-      "purchasedAt",
-      "purchase_date",
-      "purchaseDate",
-      "created_at",
-      "createdAt",
-      "date"
+      "completed_at_day",
+      "completedAtDay"
     ]) ??
-    pickStringFromNested(row, [
-      ["purchase", "completed_at_day"],
-      ["purchase", "completedAtDay"],
+    pickDateFromAttributes(row.attributes, ["completed_at", "completedAt", "completed_at_day", "completedAtDay"]) ??
+    pickDateFromNested(row, [
       ["purchase", "completed_at"],
       ["purchase", "completedAt"],
-      ["purchase", "created_at"],
-      ["purchase", "createdAt"]
+      ["purchase", "completed_at_day"],
+      ["purchase", "completedAtDay"]
     ]) ??
-    new Date().toISOString();
+    "";
   const startDate =
     pickString(row, ["start_date", "startDate"]) ??
     pickStringFromNested(row, [["event", "start_date"], ["event", "startDate"], ["product", "start_date"], ["product", "startDate"]]);
