@@ -20,6 +20,17 @@ export type ListOrdersParams = {
   mode?: string;
 };
 
+export type PagingInfo = {
+  total: number | null;
+  start: number;
+  limit: number;
+};
+
+export type OrdersPage = {
+  items: RemoteOrder[];
+  paging: PagingInfo;
+};
+
 const ordersDirectBaseUrl = (process.env.EXPO_PUBLIC_ORDERS_DIRECT_BASE_URL ?? "https://connect.spotlio.com").replace(/\/$/, "");
 const defaultClient = process.env.EXPO_PUBLIC_ORDERS_API_CLIENT ?? "tlml";
 const defaultSort = process.env.EXPO_PUBLIC_ORDERS_API_SORT ?? "completed_at_day:desc";
@@ -294,6 +305,23 @@ function extractOrderArrays(value: unknown): unknown[][] {
   return collectCandidateArrays(value);
 }
 
+function extractPagingInfo(payload: unknown, fallbackOffset: number, fallbackLimit: number): PagingInfo {
+  const payloadRecord = asRecord(payload);
+  const paging =
+    (payloadRecord ? asRecord(payloadRecord.paging) : null) ??
+    (payloadRecord ? asRecord(asRecord(payloadRecord.meta)?.paging) : null) ??
+    null;
+
+  const total = paging ? pickNumber(paging, ["total", "count", "total_count", "totalCount"]) : null;
+  const start = paging ? pickNumber(paging, ["start", "offset"]) ?? fallbackOffset : fallbackOffset;
+  const limit = paging ? pickNumber(paging, ["limit", "page_size", "pageSize"]) ?? fallbackLimit : fallbackLimit;
+  return {
+    total,
+    start: Math.max(0, Math.trunc(start)),
+    limit: Math.max(1, Math.trunc(limit))
+  };
+}
+
 export function parseOrdersResponse(payload: unknown): RemoteOrder[] {
   const candidates = extractOrderArrays(payload);
   for (const candidate of candidates) {
@@ -312,7 +340,7 @@ export function parseOrdersResponse(payload: unknown): RemoteOrder[] {
   return [];
 }
 
-async function requestOrders(url: string): Promise<RemoteOrder[]> {
+async function requestOrders(url: string, fallbackOffset: number, fallbackLimit: number): Promise<OrdersPage> {
   const response = await fetch(url, {
     method: "GET",
     headers: {
@@ -341,10 +369,18 @@ async function requestOrders(url: string): Promise<RemoteOrder[]> {
         : JSON.stringify(payload).slice(0, 240);
     throw new Error(`Orders response contained no parsable items. Sample: ${sample}`);
   }
-  return parsed;
+  return {
+    items: parsed,
+    paging: extractPagingInfo(payload, fallbackOffset, fallbackLimit)
+  };
 }
 
 export async function listOrders(params: ListOrdersParams): Promise<RemoteOrder[]> {
+  const page = await listOrdersPage(params);
+  return page.items;
+}
+
+export async function listOrdersPage(params: ListOrdersParams): Promise<OrdersPage> {
   const query = new URLSearchParams();
   query.set("limit", String(params.limit));
   query.set("offset", String(params.offset));
@@ -357,5 +393,29 @@ export async function listOrders(params: ListOrdersParams): Promise<RemoteOrder[
   const directQuery = new URLSearchParams(query);
   directQuery.set("client", defaultClient);
   const directUrl = `${ordersDirectBaseUrl}/console/orders?${directQuery.toString()}`;
-  return requestOrders(directUrl);
+  return requestOrders(directUrl, params.offset, params.limit);
+}
+
+export async function listCustomerOrders(customerId: string): Promise<RemoteOrder[]> {
+  const safeCustomerId = encodeURIComponent(customerId);
+  const query = new URLSearchParams();
+  query.set("client", defaultClient);
+  const url = `${ordersDirectBaseUrl}/console/customers/${safeCustomerId}/orders?${query.toString()}`;
+  const page = await requestOrders(url, 0, 50);
+  return page.items;
+}
+
+export async function getOrderById(orderId: string): Promise<RemoteOrder | null> {
+  const query = new URLSearchParams();
+  query.set("client", defaultClient);
+  query.set("limit", "10");
+  query.set("offset", "0");
+  query.set("sort", defaultSort);
+  query.set("mode", defaultMode);
+  defaultStatuses.forEach((status) => query.append("status[]", status));
+  query.set("search[id]", orderId);
+
+  const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
+  const page = await requestOrders(url, 0, 10);
+  return page.items[0] ?? null;
 }

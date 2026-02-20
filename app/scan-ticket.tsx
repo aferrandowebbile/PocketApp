@@ -128,7 +128,16 @@ export default function ScanTicketScreen() {
 
   return (
     <AppShell title="Scan Ticket">
-      <Pressable style={styles.back} onPress={() => router.back()}>
+      <Pressable
+        style={styles.back}
+        onPress={() => {
+          if (router.canGoBack()) {
+            router.back();
+            return;
+          }
+          router.replace("/(tabs)/orders");
+        }}
+      >
         <Text style={styles.backLabel}>Back</Text>
       </Pressable>
 

@@ -8,7 +8,7 @@ Customer-facing support + commerce companion app for Spotlio customers.
 - expo-router
 - StyleSheet-based UI
 - Supabase (Auth, Postgres, Storage, Realtime)
-- Voice notes: expo-av + expo-file-system
+- Voice notes: expo-audio + expo-file-system
 - QR scan: expo-camera
 - Zendesk integration via backend API (`/server` local mock)
 
@@ -37,6 +37,7 @@ Copy `.env.example` to `.env` and set:
 - `EXPO_PUBLIC_ORDERS_API_SORT` (default `completed_at_day:desc`)
 - `EXPO_PUBLIC_ORDERS_API_MODE` (default `partial`)
 - `EXPO_PUBLIC_ORDERS_API_STATUS` (default `completed,canceled`)
+- `EXPO_PUBLIC_DASHBOARD_SOURCE` (`mock` default; options: `mock|supabase|api`)
 - `EXPO_PUBLIC_ENABLE_ADMIN_COMMERCE` (default `false`)
 - `EXPO_PUBLIC_VALIDATION_COOLDOWN_MINUTES` (default `5`)
 
@@ -64,11 +65,13 @@ Backend/ops vars:
 1. Create a Supabase project.
 2. Run migration:
    - Apply `supabase/migrations/0001_init.sql`.
+   - Apply `supabase/migrations/0002_operator_dashboard.sql` (Operator dashboard KPI snapshots + alerts).
 3. Ensure storage bucket exists:
    - `ticket-audio` (migration inserts it automatically if missing).
 4. (Optional) Seed demo data:
    - Replace `<ADMIN_USER_UUID>`, `<OPERATOR_USER_UUID>`, `<VIEWER_USER_UUID>` in `supabase/seed.sql`.
    - Run the seed SQL.
+   - Seed includes dashboard mock KPIs/alerts for Home.
 
 ### Roles and Access
 

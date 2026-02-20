@@ -4,8 +4,9 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { theme } from "@/constants/theme";
-import { getCachedOrder } from "@/lib/orderStore";
+import { cacheOrder, getCachedOrder } from "@/lib/orderStore";
 import { orderActionsClient } from "@/services/orderActionsClient";
+import { getOrderById, type RemoteOrder } from "@/services/ordersClient";
 
 type OrderLine = {
   name: string;
@@ -130,7 +131,7 @@ function getPricingAndDateFromItemAttributes(attributes: unknown): {
     const row = asRecord(item);
     if (!row) continue;
 
-    const key = normalizeAttrKey(getStr(row, ["name", "key", "label", "field"]) ?? "");
+    const key = normalizeAttrKey(getStr(row, ["attribute", "name", "key", "label", "field"]) ?? "");
     const valueObj = asRecord(row.value);
     const scalar =
       getStr(row, ["value", "text", "answer"]) ??
@@ -202,9 +203,9 @@ function extractOrderLines(raw: Record<string, unknown> | undefined): OrderLine[
           getStr(row, ["name", "product_name", "productName", "title", "ticket_name", "ticketName"]) ?? "Product";
         const quantity = getNum(row, ["quantity", "qty", "count", "units"]) ?? 1;
         const attrsPricing = getPricingAndDateFromItemAttributes(row.attributes);
-        const amount = attrsPricing.unitPrice ?? getNum(row, ["amount", "price", "total", "total_price", "totalPrice"]);
-        const currency = attrsPricing.currency ?? getStr(row, ["currency", "currency_code", "currencyCode"]);
-        const startDate = attrsPricing.date ?? getStr(row, ["start_date", "startDate", "date"]);
+        const amount = getNum(row, ["unit_price", "unitPrice"]);
+        const currency = getStr(row, ["currency", "currency_code", "currencyCode"]);
+        const startDate = attrsPricing.date;
         const imageUrl =
           getStr(row, ["image", "image_url", "imageUrl"]) ??
           getStr(asRecord(row.product) ?? {}, ["image", "image_url", "imageUrl"]) ??
@@ -244,23 +245,50 @@ export default function OrderDetailScreen() {
 
   const id = typeof params.id === "string" ? params.id : "";
   const cached = id ? getCachedOrder(id) : null;
+  const [orderData, setOrderData] = React.useState<RemoteOrder | null>(cached);
+  const [orderLoading, setOrderLoading] = React.useState(false);
+  const [orderError, setOrderError] = React.useState<string | null>(null);
 
-  const guestName = cached?.guestName ?? (typeof params.guestName === "string" ? params.guestName : "Unknown guest");
-  const product = cached?.product ?? (typeof params.product === "string" ? params.product : "Unknown product");
-  const quantity = cached?.quantity ?? Number(params.quantity ?? "1");
-  const totalPrice = cached?.totalPrice ?? (params.totalPrice ? Number(params.totalPrice) : null);
-  const currency = cached?.currency ?? (typeof params.currency === "string" && params.currency ? params.currency : null);
-  const status = cached?.status ?? (typeof params.status === "string" ? params.status : "unknown");
-  const date = cached?.date ?? (typeof params.date === "string" ? params.date : new Date().toISOString());
-  const startDate = cached?.startDate ?? (typeof params.startDate === "string" ? params.startDate : null);
+  React.useEffect(() => {
+    if (!id) return;
+
+    setOrderLoading(true);
+    setOrderError(null);
+
+    getOrderById(id)
+      .then((freshOrder) => {
+        if (!freshOrder) {
+          setOrderError("Order was not found in API response.");
+          return;
+        }
+        setOrderData(freshOrder);
+        cacheOrder(freshOrder);
+      })
+      .catch((error: unknown) => {
+        setOrderError(error instanceof Error ? error.message : "Failed to load order details.");
+      })
+      .finally(() => {
+        setOrderLoading(false);
+      });
+  }, [id]);
+
+  const sourceOrder = orderData ?? cached;
+  const guestName = sourceOrder?.guestName ?? (typeof params.guestName === "string" ? params.guestName : "Unknown guest");
+  const product = sourceOrder?.product ?? (typeof params.product === "string" ? params.product : "Unknown product");
+  const quantity = sourceOrder?.quantity ?? Number(params.quantity ?? "1");
+  const totalPrice = sourceOrder?.totalPrice ?? (params.totalPrice ? Number(params.totalPrice) : null);
+  const currency = sourceOrder?.currency ?? (typeof params.currency === "string" && params.currency ? params.currency : null);
+  const status = sourceOrder?.status ?? (typeof params.status === "string" ? params.status : "unknown");
+  const date = sourceOrder?.date ?? (typeof params.date === "string" ? params.date : new Date().toISOString());
+  const startDate = sourceOrder?.startDate ?? (typeof params.startDate === "string" ? params.startDate : null);
   const [validatedAt, setValidatedAt] = React.useState<string | null>(null);
   const [refundedAt, setRefundedAt] = React.useState<string | null>(null);
   const [selectedItemIndex, setSelectedItemIndex] = React.useState<number | null>(null);
   const [itemActionMessage, setItemActionMessage] = React.useState<string | null>(null);
   const [rawOpen, setRawOpen] = React.useState(false);
   const [actionLoading, setActionLoading] = React.useState<null | "validate-order" | "refund-order" | "validate-item" | "refund-item">(null);
-  const productLines = React.useMemo(() => extractOrderLines(cached?.raw), [cached?.raw]);
-  const totals = React.useMemo(() => extractOrderTotals(cached?.raw), [cached?.raw]);
+  const productLines = React.useMemo(() => extractOrderLines(sourceOrder?.raw), [sourceOrder?.raw]);
+  const totals = React.useMemo(() => extractOrderTotals(sourceOrder?.raw), [sourceOrder?.raw]);
   const normalizedStatus = status.toLowerCase();
   const canValidate = ["completed", "valid"].includes(normalizedStatus) && !validatedAt && !refundedAt;
   const canRefund = ["completed", "valid"].includes(normalizedStatus) && !refundedAt;
@@ -307,7 +335,16 @@ export default function OrderDetailScreen() {
     <AppShell title="Order Detail">
       <View style={styles.screen}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <Pressable style={styles.back} onPress={() => router.back()}>
+        <Pressable
+          style={styles.back}
+          onPress={() => {
+            if (router.canGoBack()) {
+              router.back();
+              return;
+            }
+            router.replace("/(tabs)/orders");
+          }}
+        >
           <Text style={styles.backLabel}>Back to orders</Text>
         </Pressable>
 
@@ -315,7 +352,9 @@ export default function OrderDetailScreen() {
           <Text style={styles.orderId}>#{id || "N/A"}</Text>
           <Text style={styles.guest}>{guestName}</Text>
           <Text style={styles.date}>{new Date(date).toLocaleString()}</Text>
-          <Text style={styles.date}>Start date: {startDate ? new Date(startDate).toLocaleString() : "-"}</Text>
+          {startDate ? <Text style={styles.date}>Start date: {new Date(startDate).toLocaleString()}</Text> : null}
+          {orderLoading ? <Text style={styles.date}>Refreshing order from API...</Text> : null}
+          {orderError ? <Text style={styles.errorText}>{orderError}</Text> : null}
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{status.toUpperCase()}</Text>
           </View>
@@ -335,9 +374,11 @@ export default function OrderDetailScreen() {
             >
               {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
               <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
-              <Text style={styles.productRow}>{`Person: ${(line.firstName || line.lastName) ? `${line.firstName ?? "-"} ${line.lastName ?? "-"}` : "-"}`}</Text>
+              {line.firstName || line.lastName ? (
+                <Text style={styles.productRow}>{`Person: ${[line.firstName, line.lastName].filter(Boolean).join(" ")}`}</Text>
+              ) : null}
               <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
-              <Text style={styles.productRow}>{`Start Date: ${line.startDate ? new Date(line.startDate).toLocaleString() : "-"}`}</Text>
+              {line.startDate ? <Text style={styles.productRow}>{`Start Date: ${new Date(line.startDate).toLocaleString()}`}</Text> : null}
               {selectedItemIndex === index ? (
                 <View style={styles.itemActions}>
                   <Pressable
@@ -389,13 +430,13 @@ export default function OrderDetailScreen() {
           {refundedAt ? <Text style={styles.validatedAt}>Refunded at {new Date(refundedAt).toLocaleString()}</Text> : null}
         </View>
 
-        {cached?.raw ? (
+        {sourceOrder?.raw ? (
           <View style={styles.accordionWrap}>
             <Pressable style={styles.accordionHeader} onPress={() => setRawOpen((prev) => !prev)}>
               <Text style={styles.accordionTitle}>Raw Payload (Debug)</Text>
               <Text style={styles.accordionChevron}>{rawOpen ? "▲" : "▼"}</Text>
             </Pressable>
-            {rawOpen ? <Card title="Payload" subtitle={JSON.stringify(cached.raw, null, 2)} /> : null}
+            {rawOpen ? <Card title="Payload" subtitle={JSON.stringify(sourceOrder.raw, null, 2)} /> : null}
           </View>
         ) : null}
       </ScrollView>
@@ -483,6 +524,10 @@ const styles = StyleSheet.create({
   date: {
     marginTop: 6,
     color: theme.colors.mutedText
+  },
+  errorText: {
+    marginTop: 6,
+    color: theme.colors.danger
   },
   badge: {
     marginTop: 10,

@@ -27,7 +27,13 @@
     "plugins": [
       "expo-router",
       "expo-camera",
-      "expo-av"
+      [
+        "react-native-nfc-manager",
+        {
+          "nfcPermission": "Spotlio Pocket uses NFC to read and validate tickets.",
+          "includeNdefEntitlement": true
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

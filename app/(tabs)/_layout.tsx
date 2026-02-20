@@ -1,7 +1,7 @@
 import React from "react";
 import { Redirect, Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/lib/auth";
 import { canAccessCommerce } from "@/lib/permissions";
@@ -40,10 +40,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="home"
         options={{
-          title: "Home",
-          tabBarIcon: ({ color, size, focused }) => (
-            <Feather name={focused ? "grid" : "grid"} size={size} color={color} />
-          )
+          title: "Dashboard",
+          tabBarIcon: ({ color, size }) => <Feather name="bar-chart-2" size={size} color={color} />
         }}
       />
       <Tabs.Screen
@@ -54,29 +52,10 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="assistant"
+        name="guests"
         options={{
-          title: "Assistant",
-          tabBarIcon: ({ focused }) => <Feather name="aperture" size={20} color={focused ? "#111827" : "#5b6070"} />,
-          tabBarButton: (props) => (
-            <Pressable
-              onPress={props.onPress}
-              onLongPress={props.onLongPress}
-              accessibilityState={props.accessibilityState}
-              accessibilityLabel={props.accessibilityLabel}
-              testID={props.testID}
-              style={({ pressed }) => [styles.assistantWrap, pressed ? styles.assistantPressed : null]}
-            >
-              <View style={styles.assistantInner}>{props.children}</View>
-            </Pressable>
-          )
-        }}
-      />
-      <Tabs.Screen
-        name="notifications"
-        options={{
-          title: "Notifications",
-          tabBarIcon: ({ color, size }) => <Feather name="bell" size={size} color={color} />
+          title: "Guests",
+          tabBarIcon: ({ color, size }) => <Feather name="users" size={size} color={color} />
         }}
       />
       <Tabs.Screen
@@ -94,32 +73,7 @@ export default function TabLayout() {
           href: showCommerce ? "/(tabs)/commerce" : null
         }}
       />
+      <Tabs.Screen name="notifications" options={{ href: null }} />
     </Tabs>
   );
 }
-
-const styles = StyleSheet.create({
-  assistantWrap: {
-    top: -14,
-    justifyContent: "center",
-    alignItems: "center"
-  },
-  assistantPressed: {
-    opacity: 0.92
-  },
-  assistantInner: {
-    minWidth: 66,
-    height: 54,
-    borderRadius: 999,
-    backgroundColor: theme.colors.accent,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#fcb4e0",
-    shadowOpacity: 0.45,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
-    borderWidth: 1,
-    borderColor: "#f8a7d9"
-  }
-});

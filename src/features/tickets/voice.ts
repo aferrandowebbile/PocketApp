@@ -1,26 +1,27 @@
-import { Audio } from "expo-av";
+import { AudioModule, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";
+import type { AudioRecorder } from "expo-audio";
 
 export async function ensureAudioPermissions(): Promise<boolean> {
-  const permission = await Audio.requestPermissionsAsync();
+  const permission = await requestRecordingPermissionsAsync();
   return permission.granted;
 }
 
-export async function startRecording(): Promise<Audio.Recording> {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true
+export async function startRecording(): Promise<AudioRecorder> {
+  await setAudioModeAsync({
+    allowsRecording: true,
+    playsInSilentMode: true
   });
 
-  const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-  await recording.startAsync();
+  const recording = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  await recording.prepareToRecordAsync();
+  recording.record();
   return recording;
 }
 
-export async function stopRecording(recording: Audio.Recording): Promise<{ uri: string; durationMs: number }> {
-  await recording.stopAndUnloadAsync();
-  const status = await recording.getStatusAsync();
-  const uri = recording.getURI();
+export async function stopRecording(recording: AudioRecorder): Promise<{ uri: string; durationMs: number }> {
+  await recording.stop();
+  const status = recording.getStatus();
+  const uri = recording.uri ?? status.url;
 
   if (!uri) {
     throw new Error("Recording file is missing");
@@ -28,6 +29,6 @@ export async function stopRecording(recording: Audio.Recording): Promise<{ uri: 
 
   return {
     uri,
-    durationMs: "durationMillis" in status ? status.durationMillis ?? 0 : 0
+    durationMs: status.durationMillis ?? Math.round(recording.currentTime * 1000)
   };
 }

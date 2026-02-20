@@ -20,9 +20,39 @@ function RootNavigator() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="login" />
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="scan-ticket" />
+      <Stack.Screen
+        name="scan-ticket"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+          animation: "slide_from_right"
+        }}
+      />
+      <Stack.Screen
+        name="scan-nfc"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+          animation: "slide_from_right"
+        }}
+      />
       <Stack.Screen name="ticket/[id]" />
-      <Stack.Screen name="order/[id]" />
+      <Stack.Screen
+        name="order/[id]"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+          animation: "slide_from_right"
+        }}
+      />
+      <Stack.Screen
+        name="guest/[id]"
+        options={{
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
+          animation: "slide_from_right"
+        }}
+      />
       <Stack.Screen name="commerce/arrivals" />
       <Stack.Screen name="commerce/customer-search" />
       <Stack.Screen name="commerce/scan-qr" />
