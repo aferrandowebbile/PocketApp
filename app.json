@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Spotlio Pocket",
+    "slug": "spotlio-pocket",
+    "scheme": "spotlio-pocket",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.spotlio.pocket",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Spotlio Pocket uses camera access to scan purchase QR codes.",
+        "NSMicrophoneUsageDescription": "Spotlio Pocket uses microphone access to record ticket voice notes."
+      }
+    },
+    "android": {
+      "package": "com.spotlio.pocket",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-camera",
+      "expo-av"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
