@@ -1,3 +1,5 @@
+import { getSelectedSiteApiToken } from "@/lib/directusAuth";
+
 export type RemoteGuest = {
   id: string;
   firstName: string | null;
@@ -16,6 +18,7 @@ export type ListGuestsParams = {
   offset: number;
   sort?: string;
   searchCustomer?: string;
+  tenantId?: string;
 };
 
 export type GuestsPagingInfo = {
@@ -30,8 +33,13 @@ export type GuestsPage = {
 };
 
 const guestsDirectBaseUrl = (process.env.EXPO_PUBLIC_ORDERS_DIRECT_BASE_URL ?? "https://connect.spotlio.com").replace(/\/$/, "");
-const defaultClient = process.env.EXPO_PUBLIC_ORDERS_API_CLIENT ?? "tlml";
 const defaultSort = process.env.EXPO_PUBLIC_GUESTS_API_SORT ?? "completed_at_day:desc";
+
+function resolveTenantId(tenantId?: string | null): string {
+  const explicit = tenantId?.trim();
+  if (explicit && explicit.length > 0) return explicit;
+  throw new Error("Missing selected site alias. Please select a site in Profile before loading guests.");
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
@@ -195,11 +203,18 @@ export function parseGuestsResponse(payload: unknown): RemoteGuest[] {
 }
 
 async function requestGuests(url: string, fallbackOffset: number, fallbackLimit: number): Promise<GuestsPage> {
+  const apiToken = await getSelectedSiteApiToken();
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*"
+  };
+  if (apiToken) {
+    headers.Authorization = `Bearer ${apiToken}`;
+    headers["X-API-Key"] = apiToken;
+  }
+
   const response = await fetch(url, {
     method: "GET",
-    headers: {
-      Accept: "application/json, text/plain, */*"
-    }
+    headers
   });
 
   if (!response.ok) {
@@ -234,7 +249,7 @@ export async function listGuests(params: ListGuestsParams): Promise<RemoteGuest[
 
 export async function listGuestsPage(params: ListGuestsParams): Promise<GuestsPage> {
   const query = new URLSearchParams();
-  query.set("client", defaultClient);
+  query.set("client", resolveTenantId(params.tenantId));
   query.set("limit", String(params.limit));
   query.set("offset", String(params.offset));
   query.set("sort", params.sort ?? defaultSort);

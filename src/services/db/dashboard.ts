@@ -1,6 +1,4 @@
-import { supabase } from "@/lib/supabase";
-
-export type DashboardSource = "supabase" | "mock" | "api";
+export type DashboardSource = "mock" | "api" | "supabase";
 
 export type DashboardAlert = {
   id: string;
@@ -14,6 +12,10 @@ export type DashboardAlert = {
 
 export type OperatorDashboard = {
   status: "on_track" | "at_risk";
+  totalRevenue: number;
+  currency: string | null;
+  mobileRevenue: number;
+  desktopRevenue: number;
   arrivalsExpected: number;
   arrivalsArrived: number;
   arrivalsNoShow: number;
@@ -33,107 +35,90 @@ export type OperatorDashboard = {
   source: DashboardSource;
 };
 
-type SnapshotRow = {
-  status: "on_track" | "at_risk";
-  arrivals_expected: number;
-  arrivals_arrived: number;
-  arrivals_no_show: number;
-  pending_checkins_2h: number;
-  checkins_last_60m: number;
-  validation_success_rate: number;
-  invalid_scans: number;
-  rejected_scans: number;
-  top_product_name: string | null;
-  top_product_count: number;
-  open_incidents: number;
-  staff_load_hint: string | null;
-  checkins_by_hour: unknown;
-  invalid_scans_by_hour: unknown;
-  no_show_by_hour: unknown;
+type ExportMetric = {
+  total?: number;
+  currency?: string;
+  num_orders?: number;
+  num_products?: number;
+  daily?: Record<string, ExportMetric | null>;
 };
 
-type AlertRow = DashboardAlert;
+type ExportProduct = {
+  name?: string;
+  total?: number;
+  fees?: number;
+  currency?: string;
+  num_products?: number;
+};
 
-function toNumberArray(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (typeof item === "number" && Number.isFinite(item)) return item;
-      if (typeof item === "string" && item.trim() && !Number.isNaN(Number(item))) return Number(item);
-      return null;
-    })
-    .filter((item): item is number => item !== null);
+type OrdersExportPayload = {
+  all?: ExportMetric;
+  desktop?: ExportMetric;
+  mobile?: ExportMetric;
+  products?: ExportProduct[];
+};
+
+const ordersExportBaseUrl = (process.env.EXPO_PUBLIC_ORDERS_DIRECT_BASE_URL ?? "https://connect.spotlio.com").replace(/\/$/, "");
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function buildMockDashboard(dateIso: string): OperatorDashboard {
-  const daySeed = Number(dateIso.replace(/-/g, "").slice(-2)) || 1;
-  const expected = 100 + daySeed;
-  const arrived = Math.max(0, expected - 34);
-  const noShow = 5 + (daySeed % 3);
-  const invalid = 3 + (daySeed % 4);
-  const rejected = 1 + (daySeed % 2);
-
-  return {
-    status: "on_track",
-    arrivalsExpected: expected,
-    arrivalsArrived: arrived,
-    arrivalsNoShow: noShow,
-    pendingCheckins2h: 16 + (daySeed % 5),
-    checkinsLast60m: 10 + (daySeed % 6),
-    validationSuccessRate: 93.8,
-    invalidScans: invalid,
-    rejectedScans: rejected,
-    topProductName: "Lift Pass Day Ticket",
-    topProductCount: 48 + (daySeed % 7),
-    openIncidents: 2 + (daySeed % 3),
-    staffLoadHint: "Peak check-in traffic expected within 90 minutes.",
-    checkinsByHour: [6, 7, 8, 11, 10, 14, 16, 15, 12, 11, 9, 8],
-    invalidScansByHour: [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
-    noShowByHour: [0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1],
-    alerts: [
-      {
-        id: "mock-1",
-        severity: "warning",
-        title: "Queue building at main gate",
-        body: "Pending check-ins increased in the last 20 minutes.",
-        event_time: new Date().toISOString(),
-        action_label: "Open Arrivals",
-        action_route: "/commerce/arrivals"
-      },
-      {
-        id: "mock-2",
-        severity: "critical",
-        title: "Invalid scans spike",
-        body: "Verify devices and ticket source for invalid code attempts.",
-        event_time: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
-        action_label: "Scan Ticket",
-        action_route: "/scan-ticket"
-      }
-    ],
-    source: "mock"
-  };
+function getDailySeries(metric: ExportMetric | undefined, key: "total" | "num_orders" | "num_products"): number[] {
+  const daily = metric?.daily ?? {};
+  return Object.keys(daily)
+    .sort()
+    .map((date) => asNumber(daily[date]?.[key]));
 }
 
-function mapDashboard(snapshot: SnapshotRow, alerts: DashboardAlert[], source: DashboardSource): OperatorDashboard {
+function buildSalesHint(payload: OrdersExportPayload): string {
+  const mobile = asNumber(payload.mobile?.total);
+  const desktop = asNumber(payload.desktop?.total);
+  const total = mobile + desktop;
+  if (!total) return "No sales in the selected date range.";
+
+  const mobileShare = Math.round((mobile / total) * 100);
+  const leadingChannel = mobile >= desktop ? "mobile" : "desktop";
+  return `${leadingChannel === "mobile" ? "Mobile" : "Desktop"} leads revenue. Mobile share: ${mobileShare}%.`;
+}
+
+function mapExportToDashboard(payload: OrdersExportPayload): OperatorDashboard {
+  const all = payload.all ?? {};
+  const products = Array.isArray(payload.products) ? payload.products : [];
+  const topProduct =
+    products
+      .slice()
+      .sort((a, b) => asNumber(b.total) - asNumber(a.total))[0] ?? null;
+  const totalRevenue = asNumber(all.total);
+  const orderCount = asNumber(all.num_orders);
+  const productCount = asNumber(all.num_products);
+  const mobileRevenue = asNumber(payload.mobile?.total);
+  const desktopRevenue = asNumber(payload.desktop?.total);
+  const channelTotal = mobileRevenue + desktopRevenue;
+
   return {
-    status: snapshot.status,
-    arrivalsExpected: snapshot.arrivals_expected,
-    arrivalsArrived: snapshot.arrivals_arrived,
-    arrivalsNoShow: snapshot.arrivals_no_show,
-    pendingCheckins2h: snapshot.pending_checkins_2h,
-    checkinsLast60m: snapshot.checkins_last_60m,
-    validationSuccessRate: snapshot.validation_success_rate,
-    invalidScans: snapshot.invalid_scans,
-    rejectedScans: snapshot.rejected_scans,
-    topProductName: snapshot.top_product_name ?? "Top product",
-    topProductCount: snapshot.top_product_count,
-    openIncidents: snapshot.open_incidents,
-    staffLoadHint: snapshot.staff_load_hint ?? "Monitor arrivals and scanner health.",
-    checkinsByHour: toNumberArray(snapshot.checkins_by_hour),
-    invalidScansByHour: toNumberArray(snapshot.invalid_scans_by_hour),
-    noShowByHour: toNumberArray(snapshot.no_show_by_hour),
-    alerts,
-    source
+    status: orderCount > 0 ? "on_track" : "at_risk",
+    totalRevenue,
+    currency: all.currency ?? topProduct?.currency ?? null,
+    mobileRevenue,
+    desktopRevenue,
+    arrivalsExpected: productCount,
+    arrivalsArrived: orderCount,
+    arrivalsNoShow: Math.max(0, productCount - orderCount),
+    pendingCheckins2h: asNumber(payload.mobile?.num_orders),
+    checkinsLast60m: asNumber(payload.desktop?.num_orders),
+    validationSuccessRate: channelTotal ? (mobileRevenue / channelTotal) * 100 : 0,
+    invalidScans: products.length,
+    rejectedScans: 0,
+    topProductName: topProduct?.name ?? "No products",
+    topProductCount: asNumber(topProduct?.num_products),
+    openIncidents: 0,
+    staffLoadHint: buildSalesHint(payload),
+    checkinsByHour: getDailySeries(all, "total"),
+    invalidScansByHour: getDailySeries(payload.mobile, "total"),
+    noShowByHour: getDailySeries(payload.desktop, "total"),
+    alerts: [],
+    source: "api"
   };
 }
 
@@ -141,43 +126,33 @@ export async function getOperatorDashboard(params: {
   companyId: string;
   dateIso: string;
   source?: DashboardSource;
+  startDateIso?: string;
+  endDateIso?: string;
+  apiToken?: string | null;
 }): Promise<OperatorDashboard> {
-  const source = params.source ?? "supabase";
+  void params.companyId;
+  void params.dateIso;
+  void params.source;
 
-  if (source === "mock") {
-    return buildMockDashboard(params.dateIso);
+  if (!params.apiToken) {
+    throw new Error("Missing selected site API token. Please select a site before loading dashboard.");
   }
 
-  if (source === "api") {
-    // Placeholder for future API adapter.
-    // Keep app resilient by returning Supabase mock data shape for now.
-    return buildMockDashboard(params.dateIso);
+  const query = new URLSearchParams();
+  query.set("startDate", params.startDateIso ?? params.dateIso);
+  query.set("endDate", params.endDateIso ?? params.dateIso);
+  query.set("api_token", params.apiToken);
+
+  const response = await fetch(`${ordersExportBaseUrl}/console/export/orders?${query.toString()}`, {
+    method: "GET",
+    headers: { Accept: "application/json" }
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Dashboard export error (${response.status})${body ? `: ${body.slice(0, 140)}` : ""}`);
   }
 
-  const [snapshotResult, alertsResult] = await Promise.all([
-    supabase
-      .from("operator_dashboard_snapshots")
-      .select(
-        "status,arrivals_expected,arrivals_arrived,arrivals_no_show,pending_checkins_2h,checkins_last_60m,validation_success_rate,invalid_scans,rejected_scans,top_product_name,top_product_count,open_incidents,staff_load_hint,checkins_by_hour,invalid_scans_by_hour,no_show_by_hour"
-      )
-      .eq("company_id", params.companyId)
-      .eq("snapshot_date", params.dateIso)
-      .maybeSingle(),
-    supabase
-      .from("operator_dashboard_alerts")
-      .select("id,severity,title,body,event_time,action_label,action_route")
-      .eq("company_id", params.companyId)
-      .eq("snapshot_date", params.dateIso)
-      .order("event_time", { ascending: false })
-      .limit(8)
-  ]);
-
-  if (snapshotResult.error) throw snapshotResult.error;
-  if (alertsResult.error) throw alertsResult.error;
-
-  if (!snapshotResult.data) {
-    return buildMockDashboard(params.dateIso);
-  }
-
-  return mapDashboard(snapshotResult.data as SnapshotRow, (alertsResult.data ?? []) as AlertRow[], "supabase");
+  const payload = (await response.json()) as OrdersExportPayload;
+  return mapExportToDashboard(payload);
 }

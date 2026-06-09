@@ -9,7 +9,7 @@ export default function CommerceHomeScreen() {
   const { profile } = useAuth();
 
   if (!canAccessCommerce(profile)) {
-    return <Redirect href="/(tabs)/home" />;
+    return <Redirect href="/(tabs)/dashboard" />;
   }
 
   return (

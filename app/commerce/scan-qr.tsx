@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
-import { StyleSheet, Text, View } from "react-native";
+import { Linking, StyleSheet, Text, View } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
 import { AppShell } from "@/components/AppShell";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { theme } from "@/constants/theme";
@@ -16,9 +17,12 @@ export default function ScanQrScreen() {
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const isFocused = useIsFocused();
+  const permissionDeniedPermanently = permission?.status === "denied" && permission?.canAskAgain === false;
 
   if (!canAccessCommerce(profile)) {
-    router.replace("/(tabs)/home");
+    router.replace("/(tabs)/dashboard");
     return null;
   }
 
@@ -64,11 +68,34 @@ export default function ScanQrScreen() {
       {!permission?.granted ? (
         <View style={styles.emptyState}>
           <Text style={styles.message}>Camera permission is required to scan QR codes.</Text>
-          <PrimaryButton label="Allow camera" onPress={() => requestPermission()} />
+          <PrimaryButton
+            label={permissionDeniedPermanently ? "Open settings" : "Allow camera"}
+            onPress={() => {
+              if (permissionDeniedPermanently) {
+                Linking.openSettings().catch(() => undefined);
+                return;
+              }
+              setCameraError(null);
+              requestPermission().catch(() => undefined);
+            }}
+          />
         </View>
       ) : (
-        <CameraView style={styles.camera} barcodeScannerSettings={{ barcodeTypes: ["qr"] }} onBarcodeScanned={onScan} />
+        <View style={styles.cameraWrap} collapsable={false}>
+          <CameraView
+            key={`commerce-camera-${String(isFocused)}-${String(permission?.granted)}`}
+            style={styles.camera}
+            active={isFocused}
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            onBarcodeScanned={onScan}
+            onMountError={(event) => {
+              const details = event?.message ?? "Camera failed to mount.";
+              setCameraError(details);
+            }}
+          />
+        </View>
       )}
+      {cameraError ? <Text style={styles.errorText}>{cameraError}</Text> : null}
       {validating ? <Text style={styles.status}>Validating scan...</Text> : null}
       {message ? <Text style={styles.message}>{message}</Text> : null}
     </AppShell>
@@ -76,10 +103,12 @@ export default function ScanQrScreen() {
 }
 
 const styles = StyleSheet.create({
+  cameraWrap: {
+    height: 320,
+    borderRadius: 14
+  },
   camera: {
-    flex: 1,
-    borderRadius: 14,
-    overflow: "hidden"
+    flex: 1
   },
   message: {
     marginTop: 12,
@@ -95,5 +124,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: 12
+  },
+  errorText: {
+    marginTop: 10,
+    color: theme.colors.danger,
+    fontWeight: "600"
   }
 });

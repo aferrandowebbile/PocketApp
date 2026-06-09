@@ -3,34 +3,12 @@ export type Role = "admin" | "operator" | "viewer";
 export type Profile = {
   id: string;
   company_id: string;
+  tenant_id: string;
+  connect_client_id?: string | null;
   role: Role;
   first_name: string;
   last_name: string;
   email: string;
-};
-
-export type TicketStatus = "open" | "pending" | "solved";
-export type TicketFilter = "all" | TicketStatus;
-
-export type Ticket = {
-  id: string;
-  company_id: string;
-  subject: string;
-  status: TicketStatus;
-  priority: string | null;
-  updated_at: string;
-  created_at: string;
-};
-
-export type TicketMessage = {
-  id: string;
-  ticket_id: string;
-  direction: "customer" | "spotlio";
-  type: "text" | "audio";
-  body_text: string | null;
-  audio_storage_path: string | null;
-  audio_duration_ms: number | null;
-  created_at: string;
 };
 
 export type NotificationItem = {
@@ -39,7 +17,6 @@ export type NotificationItem = {
   type: string;
   title: string;
   body: string;
-  ticket_id: string | null;
   created_at: string;
   read_at: string | null;
 };

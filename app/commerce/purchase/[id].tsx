@@ -17,7 +17,7 @@ export default function PurchaseResultScreen() {
   const [error, setError] = useState<string | null>(null);
 
   if (!canAccessCommerce(profile)) {
-    router.replace("/(tabs)/home");
+    router.replace("/(tabs)/dashboard");
     return null;
   }
 

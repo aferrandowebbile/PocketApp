@@ -5,12 +5,19 @@ insert into public.companies (id, name)
 values ('11111111-1111-1111-1111-111111111111', 'Demo Spotlio Company')
 on conflict do nothing;
 
-insert into public.profiles (id, company_id, role, first_name, last_name, email)
+insert into public.profiles (id, company_id, tenant_id, role, first_name, last_name, email)
 values
-  ('<ADMIN_USER_UUID>', '11111111-1111-1111-1111-111111111111', 'admin', 'Alice', 'Admin', 'admin@example.com'),
-  ('<OPERATOR_USER_UUID>', '11111111-1111-1111-1111-111111111111', 'operator', 'Olivia', 'Operator', 'operator@example.com'),
-  ('<VIEWER_USER_UUID>', '11111111-1111-1111-1111-111111111111', 'viewer', 'Victor', 'Viewer', 'viewer@example.com')
+  ('<ADMIN_USER_UUID>', '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'admin', 'Alice', 'Admin', 'admin@example.com'),
+  ('<OPERATOR_USER_UUID>', '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'operator', 'Olivia', 'Operator', 'operator@example.com'),
+  ('<VIEWER_USER_UUID>', '11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111', 'viewer', 'Victor', 'Viewer', 'viewer@example.com')
 on conflict (id) do nothing;
+
+insert into public.tenant_client_mappings (tenant_id, connect_client_id)
+values ('11111111-1111-1111-1111-111111111111', 'tlml')
+on conflict (tenant_id) do update
+set
+  connect_client_id = excluded.connect_client_id,
+  updated_at = now();
 
 insert into public.customers (id, company_id, first_name, last_name, email, phone, external_ref)
 values

@@ -6,10 +6,6 @@ export function isViewer(profile: Profile | null): boolean {
   return profile?.role === "viewer";
 }
 
-export function canReplyToTickets(profile: Profile | null): boolean {
-  return Boolean(profile && profile.role !== "viewer");
-}
-
 export function canAccessCommerce(profile: Profile | null): boolean {
   if (!profile) return false;
   if (profile.role === "operator") return true;

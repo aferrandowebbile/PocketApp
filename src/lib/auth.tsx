@@ -1,67 +1,95 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+import {
+  directusConfigError,
+  hydrateDirectusSessionFromMe,
+  isDirectusConfigured,
+  restoreDirectusSession,
+  signInDirectus,
+  signOutDirectus,
+  updateSelectedSite,
+  type DirectusSession,
+  type DirectusSite
+} from "@/lib/directusAuth";
 import type { Profile } from "@/types/domain";
 
+type AuthUser = DirectusSession["user"];
+
 type AuthContextValue = {
-  user: User | null;
-  session: Session | null;
+  user: AuthUser | null;
+  session: DirectusSession | null;
   profile: Profile | null;
+  sites: DirectusSite[];
+  selectedSite: DirectusSite | null;
+  selectedSiteAlias: string | null;
+  selectedSiteApiToken: string | null;
   loading: boolean;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  selectSite: (alias: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [session, setSession] = useState<DirectusSession | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [sites, setSites] = useState<DirectusSite[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (uid: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,company_id,role,first_name,last_name,email")
-      .eq("id", uid)
-      .single();
-
-    if (error) {
-      setProfile(null);
-      return;
-    }
-    setProfile(data as Profile);
-  };
-
   useEffect(() => {
+    let active = true;
+
     const bootstrap = async () => {
-      const { data } = await supabase.auth.getSession();
-      const activeSession = data.session;
-      setSession(activeSession);
-      setUser(activeSession?.user ?? null);
-      if (activeSession?.user?.id) {
-        await fetchProfile(activeSession.user.id);
+      if (!isDirectusConfigured) {
+        if (active) {
+          setUser(null);
+          setSession(null);
+          setProfile(null);
+          setSites([]);
+        }
+        return;
       }
-      setLoading(false);
+
+      const restored = await restoreDirectusSession();
+      if (!active) return;
+
+      if (!restored) {
+        setUser(null);
+        setSession(null);
+        setProfile(null);
+        setSites([]);
+        return;
+      }
+
+      setSession(restored.session);
+      setUser(restored.session.user);
+      setProfile(restored.profile);
+      setSites(restored.sites);
+
+      const hydrated = await hydrateDirectusSessionFromMe(restored).catch(() => restored);
+      if (!active) return;
+      setSession(hydrated.session);
+      setUser(hydrated.session.user);
+      setProfile(hydrated.profile);
+      setSites(hydrated.sites);
     };
 
-    bootstrap().catch(() => setLoading(false));
+    const loadingGuard = setTimeout(() => {
+      if (active) setLoading(false);
+    }, 4000);
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-      if (newSession?.user?.id) {
-        await fetchProfile(newSession.user.id);
-      } else {
-        setProfile(null);
-      }
-    });
+    bootstrap()
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setLoading(false);
+      });
 
     return () => {
-      authListener.subscription.unsubscribe();
+      active = false;
+      clearTimeout(loadingGuard);
     };
   }, []);
 
@@ -70,29 +98,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       session,
       profile,
+      sites,
+      selectedSite: sites.find((site) => site.alias === session?.selectedSiteAlias) ?? null,
+      selectedSiteAlias: session?.selectedSiteAlias ?? null,
+      selectedSiteApiToken: session?.selectedSiteApiToken ?? null,
       loading,
       signInWithPassword: async (email: string, password: string) => {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (!isDirectusConfigured) {
+          throw new Error(directusConfigError ?? "Directus is not configured");
+        }
+        const signed = await signInDirectus(email, password);
+        setSession(signed.session);
+        setUser(signed.session.user);
+        setProfile(signed.profile);
+        setSites(signed.sites);
       },
       signInWithGoogle: async () => {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: "spotlio-pocket://"
-          }
-        });
-        if (error) throw error;
+        throw new Error("Google sign-in is not configured for Directus in this app.");
       },
       signOut: async () => {
-        const { error } = await supabase.auth.signOut();
-        if (error) throw error;
+        await signOutDirectus();
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setSites([]);
       },
       refreshProfile: async () => {
-        if (user?.id) await fetchProfile(user.id);
+        const restored = await restoreDirectusSession();
+        if (!restored) return;
+        setProfile(restored.profile);
+        setSites(restored.sites);
+      },
+      selectSite: async (alias: string) => {
+        const target = sites.find((site) => site.alias === alias);
+        if (!target) throw new Error("Site alias not found.");
+        const updated = await updateSelectedSite(target);
+        if (!updated) throw new Error("No active session to update site.");
+        setSession(updated.session);
+        setUser(updated.session.user);
+        setProfile(updated.profile);
+        setSites(updated.sites);
       }
     }),
-    [user, session, profile, loading]
+    [user, session, profile, sites, loading]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

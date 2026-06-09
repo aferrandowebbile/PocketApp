@@ -1,42 +1,58 @@
 {
   "expo": {
-    "name": "Spotlio Pocket",
+    "name": "Spotlio Control",
     "slug": "spotlio-pocket",
-    "scheme": "spotlio-pocket",
+    "scheme": "spotlio-control",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fff7fc"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.spotlio.pocket",
+      "bundleIdentifier": "com.spotlio.control",
       "infoPlist": {
-        "NSCameraUsageDescription": "Spotlio Pocket uses camera access to scan purchase QR codes.",
-        "NSMicrophoneUsageDescription": "Spotlio Pocket uses microphone access to record ticket voice notes."
+        "NSCameraUsageDescription": "Spotlio Control uses camera access to scan purchase QR codes.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.spotlio.pocket",
+      "package": "com.spotlio.control",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#fff7fc"
+      },
       "permissions": [
         "CAMERA",
-        "RECORD_AUDIO"
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
       "expo-router",
-      "expo-camera",
-      [
-        "react-native-nfc-manager",
-        {
-          "nfcPermission": "Spotlio Pocket uses NFC to read and validate tickets.",
-          "includeNdefEntitlement": true
-        }
-      ]
+      "expo-camera"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "fbf40c88-8775-4654-b288-32448cccba0e"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/fbf40c88-8775-4654-b288-32448cccba0e"
     }
   }
 }

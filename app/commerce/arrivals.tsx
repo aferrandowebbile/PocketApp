@@ -12,6 +12,7 @@ import type { Arrival } from "@/types/domain";
 
 export default function ArrivalsScreen() {
   const { profile } = useAuth();
+  const tenantId = profile?.connect_client_id ?? undefined;
   const [arrivals, setArrivals] = useState<Arrival[]>([]);
   const [orders, setOrders] = useState<RemoteOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +47,8 @@ export default function ArrivalsScreen() {
 
     listOrders({
       limit: ordersLimit,
-      offset: ordersOffset
+      offset: ordersOffset,
+      tenantId
     })
       .then((data) => {
         setOrders(data);
@@ -57,7 +59,7 @@ export default function ArrivalsScreen() {
       .finally(() => {
         setOrdersLoading(false);
       });
-  }, [ordersOffset, profile]);
+  }, [ordersOffset, profile, tenantId]);
 
   const markArrived = async (arrival: Arrival) => {
     if (!profile?.company_id) return;
@@ -80,7 +82,7 @@ export default function ArrivalsScreen() {
   };
 
   if (!canAccessCommerce(profile)) {
-    router.replace("/(tabs)/home");
+    router.replace("/(tabs)/dashboard");
     return null;
   }
 
@@ -117,7 +119,7 @@ export default function ArrivalsScreen() {
           </View>
         ))}
 
-        <Card title="Orders (Connect API)" subtitle={`client=tlml • limit=${ordersLimit} • offset=${ordersOffset}`} />
+        <Card title="Orders (Connect API)" subtitle={`tenant=${tenantId ?? "default"} • limit=${ordersLimit} • offset=${ordersOffset}`} />
         {ordersLoading ? <ActivityIndicator color={theme.colors.accentDark} style={styles.loading} /> : null}
         {ordersError ? <Text style={styles.error}>{ordersError}</Text> : null}
         {!ordersLoading && !ordersError && !orders.length ? <Text style={styles.empty}>No orders found for this page.</Text> : null}

@@ -1,19 +1,14 @@
 import React from "react";
 import { Stack } from "expo-router";
-import { ActivityIndicator, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { AuthProvider, useAuth } from "@/lib/auth";
-import { theme } from "@/constants/theme";
+import { AppLoadingScreen } from "@/components/AppLoadingScreen";
 
 function RootNavigator() {
   const { loading } = useAuth();
 
   if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#fff" }}>
-        <ActivityIndicator color={theme.colors.accentDark} />
-      </View>
-    );
+    return <AppLoadingScreen />;
   }
 
   return (
@@ -28,15 +23,6 @@ function RootNavigator() {
           animation: "slide_from_right"
         }}
       />
-      <Stack.Screen
-        name="scan-nfc"
-        options={{
-          gestureEnabled: true,
-          fullScreenGestureEnabled: true,
-          animation: "slide_from_right"
-        }}
-      />
-      <Stack.Screen name="ticket/[id]" />
       <Stack.Screen
         name="order/[id]"
         options={{

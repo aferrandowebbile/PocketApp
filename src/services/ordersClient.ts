@@ -1,3 +1,5 @@
+import { getSelectedSiteApiToken } from "@/lib/directusAuth";
+
 export type RemoteOrder = {
   id: string;
   guestName: string;
@@ -7,6 +9,7 @@ export type RemoteOrder = {
   totalPrice: number | null;
   currency: string | null;
   status: string;
+  redemption: "none" | "partial" | "full" | "error" | null;
   date: string;
   startDate: string | null;
   raw: Record<string, unknown>;
@@ -18,6 +21,8 @@ export type ListOrdersParams = {
   sort?: string;
   statuses?: string[];
   mode?: string;
+  tenantId?: string;
+  redemption?: "none" | "partial" | "full" | "error";
 };
 
 export type PagingInfo = {
@@ -31,14 +36,44 @@ export type OrdersPage = {
   paging: PagingInfo;
 };
 
+export type CustomerOrdersDebugResult = {
+  items: RemoteOrder[];
+  payload: unknown;
+};
+
+export type OrderLookupDebugResult = {
+  item: RemoteOrder | null;
+  payload: unknown;
+};
+
 const ordersDirectBaseUrl = (process.env.EXPO_PUBLIC_ORDERS_DIRECT_BASE_URL ?? "https://connect.spotlio.com").replace(/\/$/, "");
-const defaultClient = process.env.EXPO_PUBLIC_ORDERS_API_CLIENT ?? "tlml";
 const defaultSort = process.env.EXPO_PUBLIC_ORDERS_API_SORT ?? "completed_at_day:desc";
 const defaultMode = process.env.EXPO_PUBLIC_ORDERS_API_MODE ?? "partial";
+const ordersDebugEnabled = process.env.EXPO_PUBLIC_DEBUG_ORDERS_CALLS === "1";
 const defaultStatuses = (process.env.EXPO_PUBLIC_ORDERS_API_STATUS ?? "completed,canceled")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+
+function normalizeToken(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const token = value.trim();
+  return token.length ? token : null;
+}
+
+async function requireApiToken(): Promise<string> {
+  const apiToken = normalizeToken(await getSelectedSiteApiToken());
+  if (!apiToken) {
+    throw new Error("Missing selected site API token. Please select a site before loading orders.");
+  }
+  return apiToken;
+}
+
+function withApiToken(url: string, apiToken: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set("api_token", apiToken);
+  return parsed.toString();
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
@@ -279,14 +314,16 @@ function mapOrder(item: unknown): RemoteOrder | null {
     pickString(row, ["currency", "currency_code", "currencyCode"]) ??
     pickStringFromNested(row, [["payment", "currency"], ["totals", "currency"], ["pricing", "currency"], ["price", "currency"]]);
   const status = pickString(row, ["status", "state", "order_status", "orderStatus"]) ?? "unknown";
+  const redemptionRaw = pickString(row, ["redemption", "redeem_status", "redeemStatus"])?.toLowerCase() ?? null;
+  const redemption: RemoteOrder["redemption"] =
+    redemptionRaw === "none" || redemptionRaw === "partial" || redemptionRaw === "full" || redemptionRaw === "error"
+      ? redemptionRaw
+      : null;
   const date =
-    pickDateFromRecord(row, [
-      "completed_at",
-      "completedAt",
-      "completed_at_day",
-      "completedAtDay"
-    ]) ??
-    pickDateFromAttributes(row.attributes, ["completed_at", "completedAt", "completed_at_day", "completedAtDay"]) ??
+    pickDateFromRecord(row, ["completed_at", "completedAt"]) ??
+    pickDateFromAttributes(row.attributes, ["completed_at", "completedAt"]) ??
+    pickDateFromRecord(row, ["completed_at_day", "completedAtDay"]) ??
+    pickDateFromAttributes(row.attributes, ["completed_at_day", "completedAtDay"]) ??
     pickDateFromNested(row, [
       ["purchase", "completed_at"],
       ["purchase", "completedAt"],
@@ -298,7 +335,7 @@ function mapOrder(item: unknown): RemoteOrder | null {
     pickString(row, ["start_date", "startDate"]) ??
     pickStringFromNested(row, [["event", "start_date"], ["event", "startDate"], ["product", "start_date"], ["product", "startDate"]]);
 
-  return { id, guestName, product, quantity, productCount, totalPrice, currency, status, date, startDate, raw: row };
+  return { id, guestName, product, quantity, productCount, totalPrice, currency, status, redemption, date, startDate, raw: row };
 }
 
 function extractOrderArrays(value: unknown): unknown[][] {
@@ -341,20 +378,60 @@ export function parseOrdersResponse(payload: unknown): RemoteOrder[] {
 }
 
 async function requestOrders(url: string, fallbackOffset: number, fallbackLimit: number): Promise<OrdersPage> {
-  const response = await fetch(url, {
+  const result = await requestOrdersWithPayload(url, fallbackOffset, fallbackLimit);
+  return {
+    items: result.items,
+    paging: result.paging
+  };
+}
+
+async function requestOrdersWithPayload(
+  url: string,
+  fallbackOffset: number,
+  fallbackLimit: number,
+  context = "orders"
+): Promise<OrdersPage & { payload: unknown }> {
+  const apiToken = await requireApiToken();
+  const finalUrl = withApiToken(url, apiToken);
+  const headers: Record<string, string> = {
+    Accept: "application/json, text/plain, */*"
+  };
+
+  const startedAt = Date.now();
+  if (ordersDebugEnabled) {
+    console.info(`[orders-api] request`, { context, method: "GET", url: finalUrl });
+  }
+  const response = await fetch(finalUrl, {
     method: "GET",
-    headers: {
-      Accept: "application/json, text/plain, */*"
-    }
+    headers
   });
+
+  if (ordersDebugEnabled) {
+    console.info(`[orders-api] response`, {
+      context,
+      status: response.status,
+      ok: response.ok,
+      elapsedMs: Date.now() - startedAt
+    });
+  }
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    if (ordersDebugEnabled) {
+      console.info(`[orders-api] error-body`, {
+        context,
+        status: response.status,
+        bodyPreview: body.slice(0, 200)
+      });
+    }
     throw new Error(`Orders error (${response.status})${body ? `: ${body.slice(0, 120)}` : ""}`);
   }
 
   const contentType = response.headers.get("content-type") ?? "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+  if (ordersDebugEnabled) {
+    console.info(`[orders-api] payload-type`, { context, contentType });
+  }
   if (typeof payload === "string") {
     const lower = payload.toLowerCase();
     if (lower.includes("<html") || lower.includes("<!doctype html")) {
@@ -371,7 +448,8 @@ async function requestOrders(url: string, fallbackOffset: number, fallbackLimit:
   }
   return {
     items: parsed,
-    paging: extractPagingInfo(payload, fallbackOffset, fallbackLimit)
+    paging: extractPagingInfo(payload, fallbackOffset, fallbackLimit),
+    payload
   };
 }
 
@@ -389,33 +467,92 @@ export async function listOrdersPage(params: ListOrdersParams): Promise<OrdersPa
   const statuses = params.statuses?.length ? params.statuses : defaultStatuses;
   statuses.forEach((status) => query.append("status[]", status));
   query.set("mode", params.mode ?? defaultMode);
+  if (params.redemption) query.set("search[redemption]", params.redemption);
 
-  const directQuery = new URLSearchParams(query);
-  directQuery.set("client", defaultClient);
-  const directUrl = `${ordersDirectBaseUrl}/console/orders?${directQuery.toString()}`;
+  const directUrl = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
   return requestOrders(directUrl, params.offset, params.limit);
 }
 
-export async function listCustomerOrders(customerId: string): Promise<RemoteOrder[]> {
-  const safeCustomerId = encodeURIComponent(customerId);
-  const query = new URLSearchParams();
-  query.set("client", defaultClient);
-  const url = `${ordersDirectBaseUrl}/console/customers/${safeCustomerId}/orders?${query.toString()}`;
-  const page = await requestOrders(url, 0, 50);
-  return page.items;
+export async function listCustomerOrders(customerId: string, tenantId?: string): Promise<RemoteOrder[]> {
+  const result = await listCustomerOrdersWithDebug(customerId, tenantId);
+  return result.items;
 }
 
-export async function getOrderById(orderId: string): Promise<RemoteOrder | null> {
+export async function listOrdersByCustomerSearchWithDebug(
+  searchCustomer: string,
+  mode: "simple" | "partial" | "complete" = "partial"
+): Promise<CustomerOrdersDebugResult> {
+  const normalized = searchCustomer.trim();
+  if (!normalized) return { items: [], payload: { result: [], paging: { total: 0, start: 0, limit: 0 } } };
+
   const query = new URLSearchParams();
-  query.set("client", defaultClient);
-  query.set("limit", "10");
+  query.set("limit", "100");
   query.set("offset", "0");
   query.set("sort", defaultSort);
-  query.set("mode", defaultMode);
+  query.set("mode", mode);
+  query.append("status[]", "completed");
+  query.append("status[]", "canceled");
+  query.append("status[]", "canceled_refunded");
+  query.set("search[customer]", normalized);
+
+  const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
+  const page = await requestOrdersWithPayload(url, 0, 100, "listOrdersByCustomerSearchWithDebug");
+  return { items: page.items, payload: page.payload };
+}
+
+export async function listCustomerOrdersWithDebug(customerId: string, tenantId?: string): Promise<CustomerOrdersDebugResult> {
+  const safeCustomerId = encodeURIComponent(customerId);
+  const fallbackQuery = new URLSearchParams();
+  fallbackQuery.set("mode", "complete");
+  const fallbackUrl = `${ordersDirectBaseUrl}/console/customers/${safeCustomerId}/orders?${fallbackQuery.toString()}`;
+  try {
+    const page = await requestOrdersWithPayload(fallbackUrl, 0, 50, "listCustomerOrdersWithDebug");
+    return { items: page.items, payload: page.payload };
+  } catch {
+    // Secondary fallback via generic orders search when customer endpoint is unavailable.
+    const query = new URLSearchParams();
+    query.set("limit", "100");
+    query.set("offset", "0");
+    query.set("sort", defaultSort);
+    query.set("mode", "complete");
+    defaultStatuses.forEach((status) => query.append("status[]", status));
+    query.set("search[customer]", customerId);
+    const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
+    const page = await requestOrdersWithPayload(url, 0, 100, "listCustomerOrdersWithDebug-fallback");
+    return { items: page.items, payload: page.payload };
+  }
+}
+
+export async function getOrderById(orderId: string, tenantId?: string): Promise<RemoteOrder | null> {
+  const result = await getOrderByIdWithDebug(orderId, tenantId);
+  return result.item;
+}
+
+export async function getOrderByIdWithDebug(orderId: string, tenantId?: string): Promise<OrderLookupDebugResult> {
+  const query = new URLSearchParams();
+  query.set("limit", "1");
+  query.set("offset", "0");
+  query.set("sort", defaultSort);
+  query.set("mode", "complete");
   defaultStatuses.forEach((status) => query.append("status[]", status));
   query.set("search[id]", orderId);
 
   const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
-  const page = await requestOrders(url, 0, 10);
-  return page.items[0] ?? null;
+  const page = await requestOrdersWithPayload(url, 0, 1, "getOrderByIdWithDebug");
+  return { item: page.items[0] ?? null, payload: page.payload };
+}
+
+export async function getOrderByIdMinimal(orderId: string, tenantId?: string): Promise<RemoteOrder | null> {
+  const result = await getOrderByIdMinimalWithDebug(orderId, tenantId);
+  return result.item;
+}
+
+export async function getOrderByIdMinimalWithDebug(orderId: string, tenantId?: string): Promise<OrderLookupDebugResult> {
+  const query = new URLSearchParams();
+  query.set("mode", "complete");
+  query.set("search[id]", orderId);
+
+  const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
+  const page = await requestOrdersWithPayload(url, 0, 1, "getOrderByIdMinimalWithDebug");
+  return { item: page.items[0] ?? null, payload: page.payload };
 }

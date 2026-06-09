@@ -2,11 +2,15 @@ import React, { useMemo, useState } from "react";
 import { router } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { BarcodeScanningResult } from "expo-camera";
-import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useIsFocused } from "@react-navigation/native";
 import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { theme } from "@/constants/theme";
+import { useAuth } from "@/lib/auth";
+import { getSelectedSiteApiToken } from "@/lib/directusAuth";
+import { redeemsClient } from "@/services/redeemsClient";
 import { parseOrdersResponse, type RemoteOrder } from "@/services/ordersClient";
 
 type ParsedDetails = {
@@ -15,8 +19,17 @@ type ParsedDetails = {
   prettyJson?: string;
 };
 
+function extractApiMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  const message = record.message;
+  if (typeof message === "string" && message.trim()) return message;
+  const error = record.error;
+  if (typeof error === "string" && error.trim()) return error;
+  return null;
+}
+
 const ordersDirectBaseUrl = (process.env.EXPO_PUBLIC_ORDERS_DIRECT_BASE_URL ?? "https://connect.spotlio.com").replace(/\/$/, "");
-const ordersClient = process.env.EXPO_PUBLIC_ORDERS_API_CLIENT ?? "tlml";
 const ordersSort = process.env.EXPO_PUBLIC_ORDERS_API_SORT ?? "completed_at_day:desc";
 const ordersMode = process.env.EXPO_PUBLIC_ORDERS_API_MODE ?? "partial";
 const ordersStatuses = (process.env.EXPO_PUBLIC_ORDERS_API_STATUS ?? "completed,canceled")
@@ -56,7 +69,42 @@ function parseQrData(raw: string): ParsedDetails {
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  return value as Record<string, unknown>;
+}
+
+function countOrderTickets(order: RemoteOrder | null): number {
+  if (!order) return 0;
+  if (typeof order.productCount === "number" && Number.isFinite(order.productCount) && order.productCount > 0) return order.productCount;
+  if (typeof order.quantity === "number" && Number.isFinite(order.quantity) && order.quantity > 0) return order.quantity;
+
+  const raw = asRecord(order.raw);
+  if (!raw) return 0;
+  const arrays = [raw.line_items, raw.lineItems, raw.products, raw.items];
+  for (const candidate of arrays) {
+    if (Array.isArray(candidate) && candidate.length > 0) return candidate.length;
+  }
+  return 0;
+}
+
+function isOrderRedeemed(order: RemoteOrder | null): boolean {
+  if (!order) return false;
+  if (order.redemption === "full") return true;
+  const raw = asRecord(order.raw);
+  if (!raw) return false;
+  return raw.redeemed === true || raw.is_redeemed === true || raw.isRedeemed === true;
+}
+
+function canRedeemOrder(order: RemoteOrder | null): boolean {
+  if (!order) return false;
+  const status = order.status.toLowerCase();
+  return countOrderTickets(order) > 0 && !isOrderRedeemed(order) && (status === "completed" || status === "valid");
+}
+
 export default function ScanTicketScreen() {
+  const { profile } = useAuth();
+  const tenantId = profile?.connect_client_id ?? "";
   const [permission, requestPermission] = useCameraPermissions();
   const [lastScanAt, setLastScanAt] = useState(0);
   const [rawQrValue, setRawQrValue] = useState<string | null>(null);
@@ -64,36 +112,63 @@ export default function ScanTicketScreen() {
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [matchedOrder, setMatchedOrder] = useState<RemoteOrder | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
+  const [showConfirmValidationModal, setShowConfirmValidationModal] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [scanTypeLabel, setScanTypeLabel] = useState<string | null>(null);
+  const [redeemingOrder, setRedeemingOrder] = useState(false);
+  const [redeemMessage, setRedeemMessage] = useState<string | null>(null);
+  const isFocused = useIsFocused();
+  const permissionDeniedPermanently = permission?.status === "denied" && permission?.canAskAgain === false;
 
   const parsed = useMemo(() => (rawQrValue ? parseQrData(rawQrValue) : null), [rawQrValue]);
   const canValidateQr = Boolean(rawQrValue && rawQrValue.trim().length > 0);
+  const ticketCount = useMemo(() => countOrderTickets(matchedOrder), [matchedOrder]);
+  const redeemableOrder = useMemo(() => canRedeemOrder(matchedOrder), [matchedOrder]);
 
   const onScan = (result: BarcodeScanningResult) => {
     if (Date.now() - lastScanAt < 2000) return;
     setLastScanAt(Date.now());
-    setRawQrValue(result.data);
+    const scannedValue = result.data.trim();
+    setRawQrValue(scannedValue);
     setValidationMessage(null);
     setMatchedOrder(null);
+    setRedeemMessage(null);
+    setScanTypeLabel(result.type ? result.type.replace(/_/g, " ").toUpperCase() : "UNKNOWN");
+    if (/^\d+$/.test(scannedValue)) {
+      setPendingOrderId(scannedValue);
+      setShowConfirmValidationModal(true);
+    }
   };
 
-  const validateQr = async () => {
-    if (!rawQrValue) return;
+  const validateQr = async (orderIdInput?: string) => {
+    const orderId = (orderIdInput ?? rawQrValue ?? "").trim();
+    if (!orderId) return;
     setValidating(true);
     setValidationMessage(null);
     setMatchedOrder(null);
 
     try {
+      if (!tenantId.trim()) {
+        throw new Error("Missing selected site alias. Please select a site in Profile before scanning.");
+      }
       const query = new URLSearchParams();
-      query.set("client", ordersClient);
+      query.set("client", tenantId);
       query.set("limit", "10");
       query.set("offset", "0");
       query.set("sort", ordersSort);
       ordersStatuses.forEach((status) => query.append("status[]", status));
       query.set("mode", ordersMode);
-      query.set("search[id]", rawQrValue);
+      query.set("search[id]", orderId);
 
       const url = `${ordersDirectBaseUrl}/console/orders?${query.toString()}`;
-      const response = await fetch(url, { method: "GET", headers: { Accept: "application/json, text/plain, */*" } });
+      const apiToken = await getSelectedSiteApiToken();
+      const headers: Record<string, string> = { Accept: "application/json, text/plain, */*" };
+      if (apiToken) {
+        headers.Authorization = `Bearer ${apiToken}`;
+        headers["X-API-Key"] = apiToken;
+      }
+      const response = await fetch(url, { method: "GET", headers });
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");
@@ -112,18 +187,31 @@ export default function ScanTicketScreen() {
 
       const parsedOrders = parseOrdersResponse(payload);
       if (!parsedOrders.length) {
-        setValidationMessage("QR not found in orders.");
+        const apiMessage = extractApiMessage(payload);
+        setValidationMessage(apiMessage ? `Validation error: ${apiMessage}` : "Order not found for this code.");
         return;
       }
 
+      const apiMessage = extractApiMessage(payload);
       setMatchedOrder(parsedOrders[0]);
-      setValidationMessage("QR found. Ticket exists.");
+      setValidationMessage(apiMessage ? `Validation successful: ${apiMessage}` : "Validation successful: order found.");
       setShowSuccessModal(true);
     } catch (error) {
-      setValidationMessage(error instanceof Error ? error.message : "Validation failed.");
+      setValidationMessage(error instanceof Error ? `Validation error: ${error.message}` : "Validation error.");
     } finally {
       setValidating(false);
     }
+  };
+
+  const resetScanState = () => {
+    setRawQrValue(null);
+    setValidationMessage(null);
+    setMatchedOrder(null);
+    setShowSuccessModal(false);
+    setRedeemMessage(null);
+    setPendingOrderId(null);
+    setShowConfirmValidationModal(false);
+    setScanTypeLabel(null);
   };
 
   return (
@@ -143,43 +231,60 @@ export default function ScanTicketScreen() {
 
       {!permission?.granted ? (
         <View style={styles.permission}>
-          <Text style={styles.permissionText}>Camera permission is required to scan a ticket QR code.</Text>
-          <PrimaryButton label="Allow camera" onPress={() => requestPermission()} />
+          <Text style={styles.permissionText}>Camera permission is required to scan a ticket QR code or barcode.</Text>
+          <PrimaryButton
+            label={permissionDeniedPermanently ? "Open settings" : "Allow camera"}
+            onPress={() => {
+              if (permissionDeniedPermanently) {
+                Linking.openSettings().catch(() => undefined);
+                return;
+              }
+              setCameraError(null);
+              requestPermission().catch(() => undefined);
+            }}
+          />
         </View>
       ) : (
-        <View style={styles.cameraWrap}>
-          <CameraView style={styles.camera} barcodeScannerSettings={{ barcodeTypes: ["qr"] }} onBarcodeScanned={onScan} />
+        <View style={styles.cameraWrap} collapsable={false}>
+          <CameraView
+            key={`ticket-camera-${String(isFocused)}-${String(permission?.granted)}`}
+            style={styles.camera}
+            active={isFocused}
+            barcodeScannerSettings={{ barcodeTypes: ["qr", "code128", "code39", "ean13", "ean8", "upc_a", "upc_e", "itf14", "pdf417"] }}
+            onBarcodeScanned={onScan}
+            onMountError={(event) => {
+              const details = event?.message ?? "Camera failed to mount.";
+              setCameraError(details);
+            }}
+          />
           <View style={styles.overlay}>
-            <Text style={styles.overlayText}>Align QR code in frame</Text>
+            <Text style={styles.overlayText}>Align QR code or barcode in frame</Text>
           </View>
         </View>
       )}
+      {cameraError ? <Text style={styles.cameraError}>{cameraError}</Text> : null}
 
       {rawQrValue ? (
         <ScrollView style={styles.detailsWrap}>
-          <Card title="QR Raw Value" subtitle={rawQrValue} />
           <Card title="Detected Format" subtitle={parsed?.type.toUpperCase() ?? "-"} />
-          {parsed?.type === "json" && parsed.prettyJson ? <Card title="Detected JSON" subtitle={parsed.prettyJson} /> : null}
+          {scanTypeLabel ? <Card title="Scanner Type" subtitle={scanTypeLabel} /> : null}
           {parsed?.rows.map((row) => (
             <Card key={`${row.key}:${row.value}`} title={row.key} subtitle={row.value} />
           ))}
           <Pressable
             style={[styles.validateButton, !canValidateQr || validating ? styles.validateButtonDisabled : null]}
             disabled={!canValidateQr || validating}
-            onPress={validateQr}
+            onPress={() => {
+              validateQr().catch(() => undefined);
+            }}
           >
-            <Text style={styles.validateButtonLabel}>{validating ? "Validating..." : "Validate QR"}</Text>
+            <Text style={styles.validateButtonLabel}>{validating ? "Validating..." : "Validate scan"}</Text>
           </Pressable>
           {validating ? <ActivityIndicator color={theme.colors.success} style={styles.validateLoader} /> : null}
           {validationMessage ? <Text style={styles.validationMessage}>{validationMessage}</Text> : null}
           <PrimaryButton
-            label="Scan another QR"
-            onPress={() => {
-              setRawQrValue(null);
-              setValidationMessage(null);
-              setMatchedOrder(null);
-              setShowSuccessModal(false);
-            }}
+            label="Scan another code"
+            onPress={resetScanState}
           />
         </ScrollView>
       ) : null}
@@ -193,25 +298,94 @@ export default function ScanTicketScreen() {
                 <Text style={styles.modalRow}>Order: {matchedOrder.id}</Text>
                 <Text style={styles.modalRow}>Guest: {matchedOrder.guestName}</Text>
                 <Text style={styles.modalRow}>Product: {matchedOrder.product}</Text>
-                <Text style={styles.modalRow}>Quantity: {matchedOrder.quantity}</Text>
+                <Text style={styles.modalRow}>Tickets: {ticketCount}</Text>
                 <Text style={styles.modalRow}>Status: {matchedOrder.status}</Text>
                 <Text style={styles.modalRow}>Date: {new Date(matchedOrder.date).toLocaleString()}</Text>
+                {redeemMessage ? <Text style={styles.modalInfo}>{redeemMessage}</Text> : null}
+                {!redeemMessage && ticketCount === 0 ? <Text style={styles.modalInfo}>This order has no tickets to redeem.</Text> : null}
+                {!redeemMessage && ticketCount > 0 && !redeemableOrder ? (
+                  <Text style={styles.modalInfo}>
+                    {isOrderRedeemed(matchedOrder) ? "This order is already redeemed." : "This order is not eligible for redeem."}
+                  </Text>
+                ) : null}
+                {!redeemMessage && redeemableOrder ? <Text style={styles.modalInfo}>This order has tickets. Do you want to redeem it now?</Text> : null}
               </>
             ) : null}
             <View style={styles.modalActions}>
               <Pressable style={styles.modalSecondary} onPress={() => setShowSuccessModal(false)}>
                 <Text style={styles.modalSecondaryLabel}>Close</Text>
               </Pressable>
+              {redeemableOrder ? (
+                <Pressable
+                  style={[styles.modalPrimary, redeemingOrder ? styles.validateButtonDisabled : null]}
+                  disabled={redeemingOrder}
+                  onPress={async () => {
+                    if (!matchedOrder) return;
+                    try {
+                      setRedeemingOrder(true);
+                      const response = await redeemsClient.redeemOrder(matchedOrder.id);
+                      setMatchedOrder({
+                        ...matchedOrder,
+                        redemption: "full",
+                        raw: {
+                          ...matchedOrder.raw,
+                          redeemed: true,
+                          is_redeemed: true,
+                          isRedeemed: true
+                        }
+                      });
+                      setRedeemMessage(response.message || "Order redeemed");
+                      setValidationMessage(response.message || "Order redeemed");
+                    } catch (error) {
+                      const message = error instanceof Error ? error.message : "Redeem order failed.";
+                      setRedeemMessage(message);
+                    } finally {
+                      setRedeemingOrder(false);
+                    }
+                  }}
+                >
+                  <Text style={styles.modalPrimaryLabel}>{redeemingOrder ? "Redeeming..." : "Redeem order"}</Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 style={styles.modalPrimary}
                 onPress={() => {
-                  setShowSuccessModal(false);
-                  setRawQrValue(null);
-                  setValidationMessage(null);
-                  setMatchedOrder(null);
+                  resetScanState();
                 }}
               >
                 <Text style={styles.modalPrimaryLabel}>Scan Next</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showConfirmValidationModal} transparent animationType="fade" onRequestClose={() => setShowConfirmValidationModal(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Order detected</Text>
+            <Text style={styles.modalRow}>{`Order ID: ${pendingOrderId ?? "-"}`}</Text>
+            <Text style={styles.modalRow}>Do you want to validate this order now?</Text>
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalSecondary}
+                onPress={() => {
+                  setShowConfirmValidationModal(false);
+                  setPendingOrderId(null);
+                }}
+              >
+                <Text style={styles.modalSecondaryLabel}>No</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalPrimary}
+                onPress={async () => {
+                  const orderId = pendingOrderId;
+                  setShowConfirmValidationModal(false);
+                  setPendingOrderId(null);
+                  if (!orderId) return;
+                  await validateQr(orderId);
+                }}
+              >
+                <Text style={styles.modalPrimaryLabel}>Yes, validate</Text>
               </Pressable>
             </View>
           </View>
@@ -229,11 +403,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#ffd7ef",
-    backgroundColor: "#fff7fc"
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff"
   },
   backLabel: {
-    color: "#a72678",
+    color: "#374151",
     fontWeight: "700"
   },
   permission: {
@@ -249,7 +423,6 @@ const styles = StyleSheet.create({
   cameraWrap: {
     height: 280,
     borderRadius: 16,
-    overflow: "hidden",
     marginBottom: 12
   },
   camera: {
@@ -292,6 +465,17 @@ const styles = StyleSheet.create({
   validationMessage: {
     marginBottom: 10,
     color: theme.colors.text,
+    fontWeight: "600"
+  },
+  modalInfo: {
+    marginTop: 8,
+    color: theme.colors.text,
+    fontWeight: "600"
+  },
+  cameraError: {
+    marginTop: 8,
+    marginBottom: 6,
+    color: theme.colors.danger,
     fontWeight: "600"
   },
   modalBackdrop: {

@@ -42,7 +42,7 @@ export default function CustomerSearchScreen() {
   };
 
   if (!canSearch) {
-    router.replace("/(tabs)/home");
+    router.replace("/(tabs)/dashboard");
     return null;
   }
 

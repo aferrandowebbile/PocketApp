@@ -1,14 +1,17 @@
 import React from "react";
 import { router, useLocalSearchParams } from "expo-router";
+import { Feather } from "@expo/vector-icons";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { theme } from "@/constants/theme";
+import { useAuth } from "@/lib/auth";
 import { cacheOrder, getCachedOrder } from "@/lib/orderStore";
-import { orderActionsClient } from "@/services/orderActionsClient";
 import { getOrderById, type RemoteOrder } from "@/services/ordersClient";
+import { redeemsClient } from "@/services/redeemsClient";
 
 type OrderLine = {
+  lineNumber: number;
   name: string;
   quantity: number;
   amount: number | null;
@@ -17,6 +20,7 @@ type OrderLine = {
   imageUrl: string | null;
   firstName: string | null;
   lastName: string | null;
+  redeemed: boolean;
 };
 
 type OrderTotals = {
@@ -24,6 +28,39 @@ type OrderTotals = {
   amount: number | null;
   currency: string | null;
 };
+
+type ProductTimeState = "past" | "today" | "tomorrow" | "later";
+type OrderDetailParams = {
+  id?: string | string[];
+  guestName?: string | string[];
+  product?: string | string[];
+  quantity?: string | string[];
+  totalPrice?: string | string[];
+  currency?: string | string[];
+  status?: string | string[];
+  date?: string | string[];
+  startDate?: string | string[];
+  tenantId?: string | string[];
+  lookupMode?: string | string[];
+};
+
+function paramString(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return typeof value === "string" ? value : "";
+}
+
+function parseParamNumber(value: string, fallback: number): number {
+  if (!value.trim()) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatMaybeDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toLocaleString();
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object") return null;
@@ -45,6 +82,26 @@ function getStr(record: Record<string, unknown>, keys: string[]): string | null 
     if (typeof value === "string" && value.trim()) return value;
   }
   return null;
+}
+
+function hasRedeemFields(record: Record<string, unknown> | null): boolean {
+  if (!record) return false;
+  const redemption = getStr(record, ["redemption", "redeem_status", "redeemStatus"])?.toLowerCase() ?? null;
+  if (redemption === "full") return true;
+  const redeemedAt =
+    getStr(record, ["redeemed_at", "redeemedAt"]) ??
+    getStr(record, ["redeemed_at_day", "redeemedAtDay"]) ??
+    getStr(record, ["redeemed_at_hour", "redeemedAtHour"]) ??
+    null;
+  const redeemedAtObject =
+    asRecord(record.redeemed_at) ??
+    asRecord(record.redeemedAt) ??
+    null;
+  const redeemedAtObjectDay = redeemedAtObject ? getStr(redeemedAtObject, ["day", "date"]) : null;
+  const redeemedAtObjectHour = redeemedAtObject ? getStr(redeemedAtObject, ["hour", "time"]) : null;
+  if (redeemedAtObjectDay || redeemedAtObjectHour) return true;
+  if (redeemedAt) return true;
+  return record.redeemed === true || record.is_redeemed === true || record.isRedeemed === true;
 }
 
 function normalizeAttrKey(input: string): string {
@@ -180,6 +237,11 @@ function extractOrderTotals(raw: Record<string, unknown> | undefined): OrderTota
   return { numProducts, amount, currency };
 }
 
+function extractOrderRedeemed(raw: Record<string, unknown> | undefined): boolean {
+  if (!raw) return false;
+  return hasRedeemFields(raw) || hasRedeemFields(asRecord(raw.order));
+}
+
 function extractOrderLines(raw: Record<string, unknown> | undefined): OrderLine[] {
   if (!raw) return [];
   const arrays: unknown[] = [
@@ -196,30 +258,46 @@ function extractOrderLines(raw: Record<string, unknown> | undefined): OrderLine[
   for (const candidate of arrays) {
     if (!Array.isArray(candidate)) continue;
     const mapped = candidate
-      .map((item): OrderLine | null => {
+      .map((item, index): OrderLine | null => {
         const row = asRecord(item);
         if (!row) return null;
+        const lineNumber = getNum(row, ["line_number", "lineNumber", "line", "number"]) ?? index + 1;
         const name =
           getStr(row, ["name", "product_name", "productName", "title", "ticket_name", "ticketName"]) ?? "Product";
         const quantity = getNum(row, ["quantity", "qty", "count", "units"]) ?? 1;
-        const attrsPricing = getPricingAndDateFromItemAttributes(row.attributes);
-        const amount = getNum(row, ["unit_price", "unitPrice"]);
-        const currency = getStr(row, ["currency", "currency_code", "currencyCode"]);
-        const startDate = attrsPricing.date;
+        const attributes = row.attributes;
+        const attrsPricing = getPricingAndDateFromItemAttributes(attributes);
+        const amount =
+          getNum(row, ["unit_price", "unitPrice", "price", "amount", "total_amount", "totalAmount"]) ?? attrsPricing.unitPrice;
+        const currency = getStr(row, ["currency", "currency_code", "currencyCode"]) ?? attrsPricing.currency;
+        const startDate =
+          getStr(row, ["start_date", "startDate", "date", "event_date", "eventDate"]) ??
+          attrsPricing.date;
         const imageUrl =
           getStr(row, ["image", "image_url", "imageUrl"]) ??
           getStr(asRecord(row.product) ?? {}, ["image", "image_url", "imageUrl"]) ??
-          getFromAttributesArray(row.attributes, ["image", "image_url", "imageUrl", "product_image", "productImage"]);
-        const customerNames = getCustomerNamesFromItemAttributes(row.attributes);
+          getFromAttributesArray(attributes, ["image", "image_url", "imageUrl", "product_image", "productImage"]);
+        const customerNames = getCustomerNamesFromItemAttributes(attributes);
+        const firstName =
+          customerNames.firstName ??
+          getStr(row, ["first_name", "firstName"]) ??
+          getStr(asRecord(row.customer) ?? {}, ["first_name", "firstName"]);
+        const lastName =
+          customerNames.lastName ??
+          getStr(row, ["last_name", "lastName"]) ??
+          getStr(asRecord(row.customer) ?? {}, ["last_name", "lastName"]);
+        const redeemed = hasRedeemFields(row) || hasRedeemFields(asRecord(row.product));
         return {
+          lineNumber,
           name,
           quantity,
           amount,
           currency,
           startDate,
           imageUrl,
-          firstName: customerNames.firstName,
-          lastName: customerNames.lastName
+          firstName,
+          lastName,
+          redeemed
         };
       })
       .filter((line): line is OrderLine => Boolean(line));
@@ -230,20 +308,36 @@ function extractOrderLines(raw: Record<string, unknown> | undefined): OrderLine[
   return [];
 }
 
-export default function OrderDetailScreen() {
-  const params = useLocalSearchParams<{
-    id?: string;
-    guestName?: string;
-    product?: string;
-    quantity?: string;
-    totalPrice?: string;
-    currency?: string;
-    status?: string;
-    date?: string;
-    startDate?: string;
-  }>();
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
 
-  const id = typeof params.id === "string" ? params.id : "";
+function getProductTimeState(value: string | null): ProductTimeState {
+  if (!value) return "later";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "later";
+
+  const todayStart = startOfLocalDay(new Date());
+  const tomorrowStart = new Date(todayStart);
+  tomorrowStart.setDate(todayStart.getDate() + 1);
+  const dayAfterTomorrowStart = new Date(todayStart);
+  dayAfterTomorrowStart.setDate(todayStart.getDate() + 2);
+  const targetStart = startOfLocalDay(parsed);
+
+  if (targetStart.getTime() < todayStart.getTime()) return "past";
+  if (targetStart.getTime() === todayStart.getTime()) return "today";
+  if (targetStart.getTime() === tomorrowStart.getTime()) return "tomorrow";
+  if (targetStart.getTime() >= dayAfterTomorrowStart.getTime()) return "later";
+  return "later";
+}
+
+export default function OrderDetailScreen() {
+  const { profile } = useAuth();
+  const params = useLocalSearchParams<OrderDetailParams>();
+  const tenantIdFromRoute = paramString(params.tenantId);
+  const tenantId = tenantIdFromRoute || profile?.connect_client_id || undefined;
+
+  const id = paramString(params.id);
   const cached = id ? getCachedOrder(id) : null;
   const [orderData, setOrderData] = React.useState<RemoteOrder | null>(cached);
   const [orderLoading, setOrderLoading] = React.useState(false);
@@ -254,15 +348,14 @@ export default function OrderDetailScreen() {
 
     setOrderLoading(true);
     setOrderError(null);
-
-    getOrderById(id)
-      .then((freshOrder) => {
-        if (!freshOrder) {
+    getOrderById(id, tenantId)
+      .then((result) => {
+        if (!result) {
           setOrderError("Order was not found in API response.");
           return;
         }
-        setOrderData(freshOrder);
-        cacheOrder(freshOrder);
+        setOrderData(result);
+        cacheOrder(result);
       })
       .catch((error: unknown) => {
         setOrderError(error instanceof Error ? error.message : "Failed to load order details.");
@@ -270,41 +363,55 @@ export default function OrderDetailScreen() {
       .finally(() => {
         setOrderLoading(false);
       });
-  }, [id]);
+  }, [id, tenantId]);
 
   const sourceOrder = orderData ?? cached;
-  const guestName = sourceOrder?.guestName ?? (typeof params.guestName === "string" ? params.guestName : "Unknown guest");
-  const product = sourceOrder?.product ?? (typeof params.product === "string" ? params.product : "Unknown product");
-  const quantity = sourceOrder?.quantity ?? Number(params.quantity ?? "1");
-  const totalPrice = sourceOrder?.totalPrice ?? (params.totalPrice ? Number(params.totalPrice) : null);
-  const currency = sourceOrder?.currency ?? (typeof params.currency === "string" && params.currency ? params.currency : null);
-  const status = sourceOrder?.status ?? (typeof params.status === "string" ? params.status : "unknown");
-  const date = sourceOrder?.date ?? (typeof params.date === "string" ? params.date : new Date().toISOString());
-  const startDate = sourceOrder?.startDate ?? (typeof params.startDate === "string" ? params.startDate : null);
+  const routeGuestName = paramString(params.guestName);
+  const routeProduct = paramString(params.product);
+  const guestName = sourceOrder?.guestName ?? (routeGuestName.length ? routeGuestName : "Unknown guest");
+  const product = sourceOrder?.product ?? (routeProduct.length ? routeProduct : "Unknown product");
+  const quantity = sourceOrder?.quantity ?? parseParamNumber(paramString(params.quantity), 1);
+  const routeTotalPrice = paramString(params.totalPrice);
+  const totalPrice = sourceOrder?.totalPrice ?? (routeTotalPrice ? parseParamNumber(routeTotalPrice, NaN) : null);
+  const routeCurrency = paramString(params.currency);
+  const currency = sourceOrder?.currency ?? (routeCurrency ? routeCurrency : null);
+  const routeStatus = paramString(params.status);
+  const routeDate = paramString(params.date);
+  const status = sourceOrder?.status ?? (routeStatus.length ? routeStatus : "unknown");
+  const date = sourceOrder?.date ?? (routeDate.length ? routeDate : new Date().toISOString());
+  const routeStartDate = paramString(params.startDate);
+  const startDate = sourceOrder?.startDate ?? (routeStartDate ? routeStartDate : null);
   const [validatedAt, setValidatedAt] = React.useState<string | null>(null);
-  const [refundedAt, setRefundedAt] = React.useState<string | null>(null);
   const [selectedItemIndex, setSelectedItemIndex] = React.useState<number | null>(null);
   const [itemActionMessage, setItemActionMessage] = React.useState<string | null>(null);
-  const [rawOpen, setRawOpen] = React.useState(false);
-  const [actionLoading, setActionLoading] = React.useState<null | "validate-order" | "refund-order" | "validate-item" | "refund-item">(null);
+  const [actionLoading, setActionLoading] = React.useState<null | "redeem-order" | "revoke-order" | "redeem-item" | "revoke-item">(null);
+  const [orderRedeemedOverride, setOrderRedeemedOverride] = React.useState<boolean | null>(null);
+  const [lineRedeemedOverrides, setLineRedeemedOverrides] = React.useState<Record<number, boolean>>({});
   const productLines = React.useMemo(() => extractOrderLines(sourceOrder?.raw), [sourceOrder?.raw]);
   const totals = React.useMemo(() => extractOrderTotals(sourceOrder?.raw), [sourceOrder?.raw]);
+  const sourceOrderRedeemed = React.useMemo(() => extractOrderRedeemed(sourceOrder?.raw), [sourceOrder?.raw]);
+  const orderRedeemed = orderRedeemedOverride ?? sourceOrderRedeemed;
+  const redeemedProductCount = React.useMemo(
+    () => productLines.filter((line) => (lineRedeemedOverrides[line.lineNumber] ?? line.redeemed)).length,
+    [lineRedeemedOverrides, productLines]
+  );
+  const allProductsRedeemed = productLines.length > 0 && redeemedProductCount === productLines.length;
+  const fullyRedeemed = orderRedeemed || allProductsRedeemed;
   const normalizedStatus = status.toLowerCase();
-  const canValidate = ["completed", "valid"].includes(normalizedStatus) && !validatedAt && !refundedAt;
-  const canRefund = ["completed", "valid"].includes(normalizedStatus) && !refundedAt;
+  const eligibleForRedeem = Boolean(id) && ["completed", "valid"].includes(normalizedStatus);
+  const canRedeem = eligibleForRedeem && !fullyRedeemed && !validatedAt;
+  const canRevokeRedeem = eligibleForRedeem && fullyRedeemed;
   const blockedReason =
-    validatedAt
-      ? "Order already validated"
-      : refundedAt
-        ? "Order already refunded"
+    fullyRedeemed || validatedAt
+      ? "Order already redeemed"
       : normalizedStatus === "canceled"
-        ? "Canceled orders cannot be validated"
+        ? "Canceled orders cannot be redeemed"
         : normalizedStatus === "void"
-          ? "Void orders cannot be validated"
+          ? "Void orders cannot be redeemed"
           : normalizedStatus === "refunded"
-            ? "Refunded orders cannot be validated"
+            ? "Refunded orders cannot be redeemed"
             : normalizedStatus !== "completed" && normalizedStatus !== "valid"
-              ? `Order status "${status}" is not eligible for validation`
+              ? `Order status "${status}" is not eligible for redeem`
               : null;
 
   const formattedTotal = React.useMemo(() => {
@@ -330,6 +437,17 @@ export default function OrderDetailScreen() {
     }
     return totals.amount.toFixed(2);
   }, [formattedTotal, totals.amount, totals.currency]);
+  const productCountFallback = React.useMemo(() => {
+    if (!productLines.length) return quantity;
+    return productLines.reduce((sum, line) => sum + Math.max(0, line.quantity || 0), 0);
+  }, [productLines, quantity]);
+
+  const timeStateMeta: Record<ProductTimeState, { label: string; cardStyle: object; chipStyle: object }> = {
+    past: { label: "Past", cardStyle: styles.productCardPast, chipStyle: styles.productChipPast },
+    today: { label: "Today", cardStyle: styles.productCardToday, chipStyle: styles.productChipToday },
+    tomorrow: { label: "Tomorrow", cardStyle: styles.productCardTomorrow, chipStyle: styles.productChipTomorrow },
+    later: { label: "Later", cardStyle: styles.productCardLater, chipStyle: styles.productChipLater }
+  };
 
   return (
     <AppShell title="Order Detail">
@@ -348,11 +466,11 @@ export default function OrderDetailScreen() {
           <Text style={styles.backLabel}>Back to orders</Text>
         </Pressable>
 
-        <View style={styles.hero}>
+        <View style={[styles.hero, fullyRedeemed ? styles.heroRedeemed : null]}>
           <Text style={styles.orderId}>#{id || "N/A"}</Text>
           <Text style={styles.guest}>{guestName}</Text>
-          <Text style={styles.date}>{new Date(date).toLocaleString()}</Text>
-          {startDate ? <Text style={styles.date}>Start date: {new Date(startDate).toLocaleString()}</Text> : null}
+          <Text style={styles.date}>{formatMaybeDate(date) ?? "-"}</Text>
+          {startDate ? <Text style={styles.date}>Start date: {formatMaybeDate(startDate) ?? "-"}</Text> : null}
           {orderLoading ? <Text style={styles.date}>Refreshing order from API...</Text> : null}
           {orderError ? <Text style={styles.errorText}>{orderError}</Text> : null}
           <View style={styles.badge}>
@@ -362,123 +480,143 @@ export default function OrderDetailScreen() {
 
         <Text style={styles.sectionTitle}>Products</Text>
         <View style={styles.totalsCard}>
-          <Text style={styles.totalsRow}>{`Number of products: ${totals.numProducts ?? quantity}`}</Text>
+          <Text style={styles.totalsRow}>{`Number of products: ${totals.numProducts ?? productCountFallback}`}</Text>
           <Text style={styles.totalsRow}>{`Price: ${totalsPrice}`}</Text>
         </View>
         {productLines.length ? (
-          productLines.map((line, index) => (
-            <Pressable
-              key={`${line.name}-${index}`}
-              style={[styles.productCard, selectedItemIndex === index ? styles.productCardSelected : null]}
-              onPress={() => setSelectedItemIndex((prev) => (prev === index ? null : index))}
-            >
-              {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
-              <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
-              {line.firstName || line.lastName ? (
-                <Text style={styles.productRow}>{`Person: ${[line.firstName, line.lastName].filter(Boolean).join(" ")}`}</Text>
-              ) : null}
-              <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
-              {line.startDate ? <Text style={styles.productRow}>{`Start Date: ${new Date(line.startDate).toLocaleString()}`}</Text> : null}
-              {selectedItemIndex === index ? (
-                <View style={styles.itemActions}>
-                  <Pressable
-                    style={[styles.itemButton, styles.itemButtonRefund, actionLoading === "refund-item" ? styles.bottomDisabled : null]}
-                    disabled={actionLoading !== null}
-                    onPress={async () => {
-                      try {
-                        setActionLoading("refund-item");
-                        await orderActionsClient.refundOrderItem(id, { itemIndex: index, itemName: line.name });
-                        setItemActionMessage(`Item refunded: ${line.name}`);
-                      } catch (error) {
-                        setItemActionMessage(error instanceof Error ? error.message : "Refund item API not ready.");
-                      } finally {
-                        setActionLoading(null);
-                      }
-                    }}
-                  >
-                    <Text style={styles.itemButtonLabel}>{actionLoading === "refund-item" ? "Refunding..." : "Refund Item"}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.itemButton, styles.itemButtonValidate, actionLoading === "validate-item" ? styles.bottomDisabled : null]}
-                    disabled={actionLoading !== null}
-                    onPress={async () => {
-                      try {
-                        setActionLoading("validate-item");
-                        await orderActionsClient.validateOrderItem(id, { itemIndex: index, itemName: line.name });
-                        setItemActionMessage(`Item validated: ${line.name}`);
-                      } catch (error) {
-                        setItemActionMessage(error instanceof Error ? error.message : "Validate item API not ready.");
-                      } finally {
-                        setActionLoading(null);
-                      }
-                    }}
-                  >
-                    <Text style={styles.itemButtonLabel}>{actionLoading === "validate-item" ? "Validating..." : "Validate Item"}</Text>
-                  </Pressable>
+          productLines.map((line, index) => {
+            const timeState = getProductTimeState(line.startDate);
+            const meta = timeStateMeta[timeState];
+            const lineRedeemed = lineRedeemedOverrides[line.lineNumber] ?? line.redeemed;
+            const productCardStyle = lineRedeemed ? styles.productCardRedeemed : meta.cardStyle;
+            return (
+              <Pressable
+                key={`${line.name}-${index}`}
+                style={[styles.productCard, productCardStyle, selectedItemIndex === index ? styles.productCardSelected : null]}
+                onPress={() => setSelectedItemIndex((prev) => (prev === index ? null : index))}
+              >
+                <View style={[styles.productStateChip, lineRedeemed ? styles.productChipRedeemed : meta.chipStyle]}>
+                  <View style={styles.chipContent}>
+                    {lineRedeemed ? (
+                      <Feather name="check-circle" size={12} color="#166534" />
+                    ) : (
+                      <Feather name="clock" size={12} color="#374151" />
+                    )}
+                    <Text style={[styles.productStateChipLabel, lineRedeemed ? styles.productStateChipLabelRedeemed : null]}>
+                      {lineRedeemed ? "Redeemed" : meta.label}
+                    </Text>
+                  </View>
                 </View>
-              ) : null}
-            </Pressable>
-          ))
+                {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
+                <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
+                {line.firstName || line.lastName ? (
+                  <Text style={styles.productRow}>{`Person: ${[line.firstName, line.lastName].filter(Boolean).join(" ")}`}</Text>
+                ) : null}
+                <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
+                {line.startDate ? <Text style={styles.productRow}>{`Start Date: ${formatMaybeDate(line.startDate) ?? "-"}`}</Text> : null}
+                {selectedItemIndex === index ? (
+                  <View style={styles.itemActions}>
+                    {lineRedeemed ? (
+                      <Pressable
+                        style={[styles.itemButton, styles.itemButtonRefund, actionLoading === "revoke-item" ? styles.bottomDisabled : null]}
+                        disabled={actionLoading !== null}
+                        onPress={async () => {
+                          try {
+                            setActionLoading("revoke-item");
+                            const response = await redeemsClient.revokeProduct(id, line.lineNumber);
+                            setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: false }));
+                            if (response.result?.order_redeem_revoked === true) setOrderRedeemedOverride(false);
+                            setItemActionMessage(response.message || `Product redeem revoked: ${line.name}`);
+                          } catch (error) {
+                            setItemActionMessage(error instanceof Error ? error.message : "Revoke product redeem failed.");
+                          } finally {
+                            setActionLoading(null);
+                          }
+                        }}
+                      >
+                        <Text style={styles.itemButtonLabel}>{actionLoading === "revoke-item" ? "Revoking..." : "Revoke Redeem"}</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      style={[styles.itemButton, styles.itemButtonValidate, actionLoading === "redeem-item" ? styles.bottomDisabled : null]}
+                      disabled={actionLoading !== null || lineRedeemed}
+                      onPress={async () => {
+                        try {
+                          setActionLoading("redeem-item");
+                          const response = await redeemsClient.redeemProduct(id, line.lineNumber);
+                          setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: true }));
+                          if (response.result?.order_redeemed === true) setOrderRedeemedOverride(true);
+                          setItemActionMessage(response.message || `Product redeemed: ${line.name}`);
+                        } catch (error) {
+                          setItemActionMessage(error instanceof Error ? error.message : "Redeem product failed.");
+                        } finally {
+                          setActionLoading(null);
+                        }
+                      }}
+                    >
+                      <Text style={styles.itemButtonLabel}>{actionLoading === "redeem-item" ? "Redeeming..." : lineRedeemed ? "Redeemed" : "Redeem Product"}</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </Pressable>
+            );
+          })
         ) : (
           <Card title={product} subtitle={`Quantity: ${quantity}\nAmount: ${formattedTotal}`} />
         )}
         <View style={styles.validateWrap}>
           <Text style={[styles.validateNote, blockedReason ? styles.validateBlocked : styles.validateAllowed]}>
-            {itemActionMessage ?? blockedReason ?? "Tap an item to show item actions."}
+            {itemActionMessage ?? blockedReason ?? "Tap an item to show redeem actions."}
           </Text>
-          {validatedAt ? <Text style={styles.validatedAt}>Validated at {new Date(validatedAt).toLocaleString()}</Text> : null}
-          {refundedAt ? <Text style={styles.validatedAt}>Refunded at {new Date(refundedAt).toLocaleString()}</Text> : null}
+          {validatedAt ? <Text style={styles.validatedAt}>Redeemed at {new Date(validatedAt).toLocaleString()}</Text> : null}
         </View>
 
-        {sourceOrder?.raw ? (
-          <View style={styles.accordionWrap}>
-            <Pressable style={styles.accordionHeader} onPress={() => setRawOpen((prev) => !prev)}>
-              <Text style={styles.accordionTitle}>Raw Payload (Debug)</Text>
-              <Text style={styles.accordionChevron}>{rawOpen ? "▲" : "▼"}</Text>
-            </Pressable>
-            {rawOpen ? <Card title="Payload" subtitle={JSON.stringify(sourceOrder.raw, null, 2)} /> : null}
-          </View>
-        ) : null}
       </ScrollView>
       <View style={styles.bottomBar}>
+        {canRevokeRedeem ? (
+          <Pressable
+            style={[styles.bottomButton, styles.bottomRefund, actionLoading !== null ? styles.bottomDisabled : null]}
+            disabled={actionLoading !== null}
+            onPress={async () => {
+              try {
+                setActionLoading("revoke-order");
+                const response = await redeemsClient.revokeOrder(id);
+                setValidatedAt(null);
+                setOrderRedeemedOverride(false);
+                setLineRedeemedOverrides(Object.fromEntries(productLines.map((line) => [line.lineNumber, false])));
+                setItemActionMessage(response.message || "Order redeem revoked");
+              } catch (error) {
+                setItemActionMessage(error instanceof Error ? error.message : "Revoke order redeem failed.");
+              } finally {
+                setActionLoading(null);
+              }
+            }}
+          >
+            <Text style={styles.bottomButtonLabel}>
+              {actionLoading === "revoke-order" ? "Revoking..." : "Revoke"}
+            </Text>
+          </Pressable>
+        ) : null}
         <Pressable
-          style={[styles.bottomButton, styles.bottomRefund, !canRefund || actionLoading !== null ? styles.bottomDisabled : null]}
-          disabled={!canRefund || actionLoading !== null}
+          style={[styles.bottomButton, styles.bottomValidate, !canRedeem || actionLoading !== null ? styles.bottomDisabled : null]}
+          disabled={!canRedeem || actionLoading !== null}
           onPress={async () => {
             try {
-              setActionLoading("refund-order");
-              await orderActionsClient.refundOrder(id);
-              setRefundedAt(new Date().toISOString());
-              setItemActionMessage("Order refunded");
-            } catch (error) {
-              setItemActionMessage(error instanceof Error ? error.message : "Refund API not ready.");
-            } finally {
-              setActionLoading(null);
-            }
-          }}
-        >
-          <Text style={styles.bottomButtonLabel}>
-            {actionLoading === "refund-order" ? "Refunding..." : refundedAt ? "Refunded" : "Refund"}
-          </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.bottomButton, styles.bottomValidate, !canValidate || actionLoading !== null ? styles.bottomDisabled : null]}
-          disabled={!canValidate || actionLoading !== null}
-          onPress={async () => {
-            try {
-              setActionLoading("validate-order");
-              await orderActionsClient.validateOrder(id);
+              setActionLoading("redeem-order");
+              const response = await redeemsClient.redeemOrder(id);
               setValidatedAt(new Date().toISOString());
-              setItemActionMessage("Order validated");
+              setOrderRedeemedOverride(true);
+              setLineRedeemedOverrides(Object.fromEntries(productLines.map((line) => [line.lineNumber, true])));
+              setItemActionMessage(response.message || "Order redeemed");
             } catch (error) {
-              setItemActionMessage(error instanceof Error ? error.message : "Validate API not ready.");
+              setItemActionMessage(error instanceof Error ? error.message : "Redeem order failed.");
             } finally {
               setActionLoading(null);
             }
           }}
         >
           <Text style={styles.bottomButtonLabel}>
-            {actionLoading === "validate-order" ? "Validating..." : validatedAt ? "Validated" : "Validate"}
+            {actionLoading === "redeem-order" ? "Redeeming..." : validatedAt ? "Redeemed" : "Redeem"}
           </Text>
         </Pressable>
       </View>
@@ -493,22 +631,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "#fff5fb",
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#ffd7ef",
+    borderColor: "#e5e7eb",
     marginBottom: 10
   },
   backLabel: {
-    color: "#a72678",
+    color: "#374151",
     fontWeight: "700"
   },
   hero: {
-    backgroundColor: "#fff8fc",
+    backgroundColor: "#ffffff",
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#ffd7ef",
+    borderColor: "#e5e7eb",
     padding: 16,
     marginBottom: 12
+  },
+  heroRedeemed: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#86efac"
   },
   orderId: {
     color: "#cc3f97",
@@ -568,11 +710,11 @@ const styles = StyleSheet.create({
   },
   totalsCard: {
     borderWidth: 1,
-    borderColor: "#ffd7ef",
+    borderColor: "#e5e7eb",
     borderRadius: theme.radius.md,
     padding: 10,
     marginBottom: 10,
-    backgroundColor: "#fff8fc"
+    backgroundColor: "#ffffff"
   },
   totalsRow: {
     color: theme.colors.text,
@@ -587,9 +729,64 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     backgroundColor: "#fff"
   },
+  productCardPast: {
+    backgroundColor: "#fafafa",
+    borderColor: "#e5e7eb"
+  },
+  productCardToday: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#bbf7d0"
+  },
+  productCardTomorrow: {
+    backgroundColor: "#eff6ff",
+    borderColor: "#bfdbfe"
+  },
+  productCardLater: {
+    backgroundColor: "#fffaf0",
+    borderColor: "#fde68a"
+  },
+  productCardRedeemed: {
+    backgroundColor: "#f0fdf4",
+    borderColor: "#86efac"
+  },
   productCardSelected: {
-    borderColor: "#fcb4e0",
-    backgroundColor: "#fff8fc"
+    borderColor: "#f9a8d4",
+    backgroundColor: "#ffffff"
+  },
+  productStateChip: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 8
+  },
+  chipContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  productChipPast: {
+    backgroundColor: "#f3f4f6"
+  },
+  productChipToday: {
+    backgroundColor: "#dcfce7"
+  },
+  productChipTomorrow: {
+    backgroundColor: "#dbeafe"
+  },
+  productChipLater: {
+    backgroundColor: "#fef3c7"
+  },
+  productChipRedeemed: {
+    backgroundColor: "#bbf7d0"
+  },
+  productStateChipLabel: {
+    color: "#374151",
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  productStateChipLabelRedeemed: {
+    color: "#166534"
   },
   productImage: {
     width: "100%",
@@ -667,26 +864,4 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#1f2937"
   },
-  accordionWrap: {
-    marginBottom: 12
-  },
-  accordionHeader: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.radius.md,
-    backgroundColor: "#fff",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between"
-  },
-  accordionTitle: {
-    color: theme.colors.text,
-    fontWeight: "700"
-  },
-  accordionChevron: {
-    color: theme.colors.mutedText,
-    fontWeight: "700"
-  }
 });

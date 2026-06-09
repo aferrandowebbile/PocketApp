@@ -1,23 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { router } from "expo-router";
-import { Feather } from "@expo/vector-icons";
+import { Feather, Ionicons } from "@expo/vector-icons";
 import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { theme } from "@/constants/theme";
 import { cacheGuest } from "@/lib/guestStore";
+import { useAuth } from "@/lib/auth";
 import { listGuestsPage, type GuestsPagingInfo, type RemoteGuest } from "@/services/guestsClient";
 
 const pageSize = 10;
 const defaultSort = "completed_at_day:desc";
 
-function formatDate(value: string | null | undefined): string {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "-";
-  return parsed.toLocaleString();
-}
-
 export default function GuestsScreen() {
+  const { profile } = useAuth();
+  const tenantId = profile?.connect_client_id ?? undefined;
   const [guests, setGuests] = useState<RemoteGuest[]>([]);
   const [offset, setOffset] = useState(0);
   const [paging, setPaging] = useState<GuestsPagingInfo>({ total: null, start: 0, limit: pageSize });
@@ -29,6 +25,7 @@ export default function GuestsScreen() {
   const [searchDraft, setSearchDraft] = useState("");
   const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [searchCustomer, setSearchCustomer] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const load = async (
     nextOffset: number,
@@ -46,7 +43,8 @@ export default function GuestsScreen() {
         limit: pageSize,
         offset: nextOffset,
         sort: defaultSort,
-        searchCustomer: searchValue
+        searchCustomer: searchValue,
+        tenantId
       });
       if (append) {
         setGuests((prev) => {
@@ -70,7 +68,7 @@ export default function GuestsScreen() {
 
   useEffect(() => {
     load(0, "loading", "").catch(() => undefined);
-  }, []);
+  }, [tenantId]);
 
   const filteredGuests = useMemo(() => guests, [guests]);
 
@@ -93,6 +91,7 @@ export default function GuestsScreen() {
       <View style={styles.screen}>
         <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(offset, "refresh", searchCustomer)} />}
+          stickyHeaderIndices={[0]}
           contentContainerStyle={styles.content}
           scrollEventThrottle={16}
           onScroll={({ nativeEvent }) => {
@@ -104,40 +103,6 @@ export default function GuestsScreen() {
         >
           <View style={styles.searchWrap}>
             {search ? <Text style={styles.searchActive}>Active search: {search}</Text> : null}
-            <View style={styles.searchChips}>
-              <Pressable
-                style={[styles.chip, !search ? styles.chipActive : null]}
-                onPress={() => {
-                  setSearch("");
-                  setSearchCustomer("");
-                  load(0, "loading", "").catch(() => undefined);
-                }}
-              >
-                <Text style={styles.chipLabel}>All</Text>
-              </Pressable>
-              <Pressable
-                style={styles.chip}
-                onPress={() => {
-                  const next = "gmail";
-                  setSearch(next);
-                  setSearchCustomer(next);
-                  load(0, "loading", next).catch(() => undefined);
-                }}
-              >
-                <Text style={styles.chipLabel}>Email</Text>
-              </Pressable>
-              <Pressable
-                style={styles.chip}
-                onPress={() => {
-                  const next = "+";
-                  setSearch(next);
-                  setSearchCustomer(next);
-                  load(0, "loading", next).catch(() => undefined);
-                }}
-              >
-                <Text style={styles.chipLabel}>Phone</Text>
-              </Pressable>
-            </View>
             <View style={styles.paginationBar}>
               <View>
                 <Text style={styles.paginationTotal}>{totalLabel}</Text>
@@ -148,6 +113,9 @@ export default function GuestsScreen() {
                   Showing {pageLabel}
                   {pageCount ? ` • Page ${currentPage}/${pageCount}` : ""}
                 </Text>
+                <View style={styles.clientBadge}>
+                  <Text style={styles.clientBadgeLabel}>{`Client: ${tenantId ?? "-"}`}</Text>
+                </View>
               </View>
               <View style={styles.paginationActions}>
                 <Pressable
@@ -195,10 +163,7 @@ export default function GuestsScreen() {
             >
               <Text style={styles.heroOrderId}>#{guest.id}</Text>
               <Text style={styles.heroGuest}>{guest.fullName}</Text>
-              <Text style={styles.heroDate}>Purchase: {formatDate(guest.completedAt)}</Text>
-              <Text style={styles.heroDate}>Created: {formatDate(guest.createdAt)}</Text>
               <Text style={styles.heroMeta}>{`Email: ${guest.email ?? "-"}`}</Text>
-              <Text style={styles.heroMeta}>{`Phone: ${guest.phone ?? "-"}`}</Text>
               <View style={styles.heroBadge}>
                 <Text style={styles.heroBadgeText}>GUEST</Text>
               </View>
@@ -207,7 +172,62 @@ export default function GuestsScreen() {
           {loadingMore ? <Text style={styles.meta}>Loading more guests...</Text> : null}
         </ScrollView>
 
+        {filtersOpen ? (
+          <View style={styles.floatingFilterDock}>
+            <View style={styles.filterRowGrid}>
+              <Pressable
+                style={[styles.chip, !search ? styles.chipActive : null]}
+                onPress={() => {
+                  setSearch("");
+                  setSearchCustomer("");
+                  load(0, "loading", "").catch(() => undefined);
+                }}
+              >
+                <Text style={[styles.chipLabel, !search ? styles.chipLabelActive : null]}>All</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  const next = "gmail";
+                  setSearch(next);
+                  setSearchCustomer(next);
+                  load(0, "loading", next).catch(() => undefined);
+                }}
+              >
+                <Text style={styles.chipLabel}>Email</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  const next = "+";
+                  setSearch(next);
+                  setSearchCustomer(next);
+                  load(0, "loading", next).catch(() => undefined);
+                }}
+              >
+                <Text style={styles.chipLabel}>Phone</Text>
+              </Pressable>
+            </View>
+            <View style={styles.filterRowGrid}>
+              <Pressable
+                style={[styles.chip, search ? styles.chipActive : null]}
+                onPress={() => {
+                  setSearch("");
+                  setSearchDraft("");
+                  setSearchCustomer("");
+                  load(0, "loading", "").catch(() => undefined);
+                }}
+              >
+                <Text style={[styles.chipLabel, search ? styles.chipLabelActive : null]}>{search ? `Clear: ${search}` : "No search"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
         <View style={styles.actionsBar}>
+          <Pressable style={styles.actionsButton} onPress={() => setFiltersOpen((prev) => !prev)}>
+            <Feather name="sliders" size={16} color="#ff4fbe" />
+            <Text style={styles.actionsButtonLabel}>{filtersOpen ? "Hide Filters" : "Filters"}</Text>
+          </Pressable>
           <Pressable
             style={styles.actionsButton}
             onPress={
@@ -224,9 +244,11 @@ export default function GuestsScreen() {
                   }
             }
           >
+            <Feather name={search ? "x-circle" : "search"} size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>{search ? "Clear Search" : "Search"}</Text>
           </Pressable>
           <Pressable style={styles.actionsButton} onPress={() => router.push("/scan-ticket")}>
+            <Ionicons name="qr-code-outline" size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>Scan</Text>
           </Pressable>
         </View>
@@ -288,39 +310,47 @@ export default function GuestsScreen() {
 
 const styles = StyleSheet.create({
   screen: {
-    flex: 1
+    flex: 1,
+    backgroundColor: theme.colors.background
   },
   content: {
-    paddingBottom: 108
+    paddingBottom: 118
   },
   searchWrap: {
-    marginBottom: 12
+    marginBottom: 12,
+    backgroundColor: theme.colors.background,
+    zIndex: 5
   },
   actionsBar: {
     position: "absolute",
-    left: 0,
-    right: 0,
+    left: -16,
+    right: -16,
     bottom: 0,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    paddingHorizontal: 16,
+    backgroundColor: "#14161b",
+    borderTopWidth: 0,
+    paddingHorizontal: 14,
     paddingTop: 8,
-    paddingBottom: 8,
+    paddingBottom: 10,
     flexDirection: "row",
-    gap: 8
+    gap: 10,
+    zIndex: 20,
+    elevation: 20
   },
   actionsButton: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#101217",
     borderWidth: 1,
-    borderColor: "#f4bde0",
-    borderRadius: 10,
+    borderColor: "#2d3138",
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 9
+    paddingVertical: 9,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8
   },
   actionsButtonLabel: {
-    color: "#a72678",
+    color: "#ff4fbe",
     fontWeight: "800"
   },
   searchActive: {
@@ -333,22 +363,44 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8
   },
+  floatingFilterDock: {
+    position: "absolute",
+    left: -16,
+    right: -16,
+    bottom: 50,
+    backgroundColor: "#14161b",
+    borderTopWidth: 0,
+    paddingHorizontal: 14,
+    paddingTop: 4,
+    paddingBottom: 8,
+    zIndex: 19,
+    elevation: 19
+  },
+  filterRowGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 8
+  },
   chip: {
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: "#2d3138",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff"
+    backgroundColor: "#101217"
   },
   chipActive: {
-    backgroundColor: theme.colors.accent,
-    borderColor: "#f4bde0"
+    backgroundColor: "#ff4fbe",
+    borderColor: "#ff4fbe"
   },
   chipLabel: {
-    color: theme.colors.text,
+    color: "#ff4fbe",
     fontWeight: "700",
     fontSize: 12
+  },
+  chipLabelActive: {
+    color: "#0b1220"
   },
   error: {
     color: theme.colors.danger,
@@ -380,6 +432,21 @@ const styles = StyleSheet.create({
     color: theme.colors.mutedText,
     fontSize: 11,
     fontWeight: "600"
+  },
+  clientBadge: {
+    marginTop: 6,
+    alignSelf: "flex-start",
+    backgroundColor: "#fff2fb",
+    borderWidth: 1,
+    borderColor: "#f4bde0",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3
+  },
+  clientBadgeLabel: {
+    color: "#a72678",
+    fontSize: 11,
+    fontWeight: "700"
   },
   paginationActions: {
     flexDirection: "row",

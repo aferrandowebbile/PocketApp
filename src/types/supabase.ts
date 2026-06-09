@@ -14,6 +14,7 @@ export interface Database {
         {
           id: string;
           company_id: string;
+          tenant_id: string;
           role: "admin" | "operator" | "viewer";
           first_name: string;
           last_name: string;
@@ -23,6 +24,7 @@ export interface Database {
         {
           id: string;
           company_id: string;
+          tenant_id: string;
           role?: "admin" | "operator" | "viewer";
           first_name: string;
           last_name: string;
@@ -32,6 +34,7 @@ export interface Database {
         {
           id?: string;
           company_id?: string;
+          tenant_id?: string;
           role?: "admin" | "operator" | "viewer";
           first_name?: string;
           last_name?: string;
@@ -39,71 +42,24 @@ export interface Database {
           created_at?: string;
         }
       >;
-      tickets: TableDef<
+      tenant_client_mappings: TableDef<
         {
-          id: string;
-          company_id: string;
-          subject: string;
-          status: string;
-          priority: string | null;
-          assignee_user_id: string | null;
+          tenant_id: string;
+          connect_client_id: string;
+          created_at: string;
           updated_at: string;
-          created_at: string;
         },
         {
-          id: string;
-          company_id: string;
-          subject: string;
-          status: string;
-          priority?: string | null;
-          assignee_user_id?: string | null;
+          tenant_id: string;
+          connect_client_id: string;
+          created_at?: string;
           updated_at?: string;
-          created_at?: string;
         },
         {
-          id?: string;
-          company_id?: string;
-          subject?: string;
-          status?: string;
-          priority?: string | null;
-          assignee_user_id?: string | null;
+          tenant_id?: string;
+          connect_client_id?: string;
+          created_at?: string;
           updated_at?: string;
-          created_at?: string;
-        }
-      >;
-      ticket_messages: TableDef<
-        {
-          id: string;
-          ticket_id: string;
-          company_id: string;
-          created_at: string;
-          direction: "customer" | "spotlio";
-          type: "text" | "audio";
-          body_text: string | null;
-          audio_storage_path: string | null;
-          audio_duration_ms: number | null;
-        },
-        {
-          id?: string;
-          ticket_id: string;
-          company_id: string;
-          created_at?: string;
-          direction: "customer" | "spotlio";
-          type: "text" | "audio";
-          body_text?: string | null;
-          audio_storage_path?: string | null;
-          audio_duration_ms?: number | null;
-        },
-        {
-          id?: string;
-          ticket_id?: string;
-          company_id?: string;
-          created_at?: string;
-          direction?: "customer" | "spotlio";
-          type?: "text" | "audio";
-          body_text?: string | null;
-          audio_storage_path?: string | null;
-          audio_duration_ms?: number | null;
         }
       >;
       notifications: TableDef<
@@ -114,7 +70,6 @@ export interface Database {
           type: string;
           title: string;
           body: string;
-          ticket_id: string | null;
           created_at: string;
           read_at: string | null;
         },
@@ -125,7 +80,6 @@ export interface Database {
           type: string;
           title: string;
           body: string;
-          ticket_id?: string | null;
           created_at?: string;
           read_at?: string | null;
         },
@@ -136,7 +90,6 @@ export interface Database {
           type?: string;
           title?: string;
           body?: string;
-          ticket_id?: string | null;
           created_at?: string;
           read_at?: string | null;
         }
@@ -425,8 +378,6 @@ export interface Database {
       app_role: "admin" | "operator" | "viewer";
       purchase_status: "valid" | "refunded" | "void";
       arrival_status: "expected" | "arrived" | "no_show";
-      ticket_direction: "customer" | "spotlio";
-      ticket_message_type: "text" | "audio";
     };
     CompositeTypes: Record<string, never>;
   };
