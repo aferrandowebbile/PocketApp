@@ -16,7 +16,7 @@
       "**/*"
     ],
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.spotlio.control",
       "infoPlist": {
         "NSCameraUsageDescription": "Spotlio Control uses camera access to scan purchase QR codes.",

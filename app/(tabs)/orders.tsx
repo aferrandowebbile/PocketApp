@@ -4,6 +4,7 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
 import { listOrdersPage, type PagingInfo, type RemoteOrder } from "@/services/ordersClient";
 import { cacheOrder } from "@/lib/orderStore";
@@ -268,6 +269,7 @@ function CustomDatePicker({
 
 export default function OrdersScreen() {
   const { profile } = useAuth();
+  const layout = useResponsiveLayout();
   const tenantId = profile?.connect_client_id ?? undefined;
   const [orders, setOrders] = useState<RemoteOrder[]>([]);
   const [offset, setOffset] = useState(0);
@@ -381,6 +383,7 @@ export default function OrdersScreen() {
   const canPrev = paging.start > 0 && !loading && !loadingMore;
   const canNext = !loading && !loadingMore && (paging.total === null ? orders.length >= paging.limit : paging.start + paging.limit < paging.total);
   const canLoadMore = paging.total === null ? orders.length >= paging.limit : orders.length < paging.total;
+  const listCardWidth = layout.cardColumns === 3 ? "31.5%" : layout.cardColumns === 2 ? "48.5%" : "100%";
 
   const ordersTitleChip = paging.total === null ? "-" : String(paging.total);
 
@@ -390,7 +393,7 @@ export default function OrdersScreen() {
         <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(offset, "refresh")} />}
           stickyHeaderIndices={[0]}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, layout.isTablet ? styles.scrollContentTablet : null]}
           scrollEventThrottle={16}
           onScroll={({ nativeEvent }) => {
             const nearBottom =
@@ -436,105 +439,108 @@ export default function OrdersScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {!loading && !error && !filteredOrders.length ? <Text style={styles.meta}>No orders found for these filters.</Text> : null}
 
-          {filteredOrders.map((order) => {
-            const totals = extractOrderTotals(order);
-            const cardNumProducts = totals.numProducts ?? order.productCount;
-            const cardPrice = formatPrice(totals.amount ?? order.totalPrice, totals.currency ?? order.currency);
-            const stateDate = dateField === "start" ? order.startDate ?? order.date : order.date ?? order.startDate;
-            const state = getOrderTimeState(stateDate);
-            const stateLabel = state === "today" ? "Today" : state === "tomorrow" ? "Tomorrow" : state === "past" ? "Past" : "Later";
-            const redeemState = getOrderRedeemState(order);
-            return (
-              <Pressable
-                key={order.id}
-                style={[
-                  styles.heroCard,
-                  redeemState === "full"
-                    ? styles.heroCardRedeemed
-                    : redeemState === "partial"
-                      ? styles.heroCardPartiallyRedeemed
-                    : state === "past"
-                      ? styles.heroCardPast
-                      : state === "today"
-                        ? styles.heroCardToday
-                        : state === "tomorrow"
-                          ? styles.heroCardTomorrow
-                          : styles.heroCardLater
-                ]}
-                onPress={() => {
-                  cacheOrder(order);
-                  router.push({
-                    pathname: "/order/[id]",
-                    params: {
-                      id: order.id,
-                      guestName: order.guestName,
-                      product: order.product,
-                      quantity: String(order.quantity),
-                      totalPrice: order.totalPrice === null ? "" : String(order.totalPrice),
-                      currency: order.currency ?? "",
-                      status: order.status,
-                      date: order.date,
-                      startDate: order.startDate ?? "",
-                      tenantId: tenantId ?? ""
-                    }
-                  });
-                }}
-              >
-                <Text style={styles.heroOrderId}>#{order.id}</Text>
-                <Text style={styles.heroGuest}>{order.guestName}</Text>
-                <Text style={styles.heroDate}>Purchase: {formatDate(order.date)}</Text>
-                <Text style={styles.heroDate}>Start date: {formatDate(order.startDate)}</Text>
-                <Text style={styles.heroMeta}>{`Quantity: ${cardNumProducts}`}</Text>
-                <Text style={styles.heroMeta}>{`Price: ${cardPrice}`}</Text>
-                <View
+          <View style={styles.cardsGrid}>
+            {filteredOrders.map((order) => {
+              const totals = extractOrderTotals(order);
+              const cardNumProducts = totals.numProducts ?? order.productCount;
+              const cardPrice = formatPrice(totals.amount ?? order.totalPrice, totals.currency ?? order.currency);
+              const stateDate = dateField === "start" ? order.startDate ?? order.date : order.date ?? order.startDate;
+              const state = getOrderTimeState(stateDate);
+              const stateLabel = state === "today" ? "Today" : state === "tomorrow" ? "Tomorrow" : state === "past" ? "Past" : "Later";
+              const redeemState = getOrderRedeemState(order);
+              return (
+                <Pressable
+                  key={order.id}
                   style={[
-                    styles.heroDateStateChip,
+                    styles.heroCard,
+                    { width: listCardWidth },
                     redeemState === "full"
-                      ? styles.heroDateStateChipRedeemed
+                      ? styles.heroCardRedeemed
                       : redeemState === "partial"
-                        ? styles.heroDateStateChipPartiallyRedeemed
-                      : state === "past"
-                        ? styles.heroDateStateChipPast
-                        : state === "today"
-                          ? styles.heroDateStateChipToday
-                          : state === "tomorrow"
-                            ? styles.heroDateStateChipTomorrow
-                            : styles.heroDateStateChipLater
+                        ? styles.heroCardPartiallyRedeemed
+                        : state === "past"
+                          ? styles.heroCardPast
+                          : state === "today"
+                            ? styles.heroCardToday
+                            : state === "tomorrow"
+                              ? styles.heroCardTomorrow
+                              : styles.heroCardLater
                   ]}
+                  onPress={() => {
+                    cacheOrder(order);
+                    router.push({
+                      pathname: "/order/[id]",
+                      params: {
+                        id: order.id,
+                        guestName: order.guestName,
+                        product: order.product,
+                        quantity: String(order.quantity),
+                        totalPrice: order.totalPrice === null ? "" : String(order.totalPrice),
+                        currency: order.currency ?? "",
+                        status: order.status,
+                        date: order.date,
+                        startDate: order.startDate ?? "",
+                        tenantId: tenantId ?? ""
+                      }
+                    });
+                  }}
                 >
-                  <View style={styles.chipContent}>
-                    {redeemState === "full" ? (
-                      <Feather name="check-circle" size={12} color="#166534" />
-                    ) : redeemState === "partial" ? (
-                      <Feather name="clock" size={12} color="#92400e" />
-                    ) : (
-                      <Feather name="clock" size={12} color="#374151" />
-                    )}
-                    <Text
-                      style={[
-                        styles.heroDateStateChipLabel,
-                        redeemState === "full"
-                          ? styles.heroDateStateChipLabelRedeemed
-                          : redeemState === "partial"
-                            ? styles.heroDateStateChipLabelPartiallyRedeemed
-                            : null
-                      ]}
-                    >
-                      {redeemState === "full" ? "Redeemed" : redeemState === "partial" ? "Partially Redeemed" : stateLabel}
-                    </Text>
+                  <Text style={styles.heroOrderId}>#{order.id}</Text>
+                  <Text style={styles.heroGuest}>{order.guestName}</Text>
+                  <Text style={styles.heroDate}>Purchase: {formatDate(order.date)}</Text>
+                  <Text style={styles.heroDate}>Start date: {formatDate(order.startDate)}</Text>
+                  <Text style={styles.heroMeta}>{`Quantity: ${cardNumProducts}`}</Text>
+                  <Text style={styles.heroMeta}>{`Price: ${cardPrice}`}</Text>
+                  <View
+                    style={[
+                      styles.heroDateStateChip,
+                      redeemState === "full"
+                        ? styles.heroDateStateChipRedeemed
+                        : redeemState === "partial"
+                          ? styles.heroDateStateChipPartiallyRedeemed
+                          : state === "past"
+                            ? styles.heroDateStateChipPast
+                            : state === "today"
+                              ? styles.heroDateStateChipToday
+                              : state === "tomorrow"
+                                ? styles.heroDateStateChipTomorrow
+                                : styles.heroDateStateChipLater
+                    ]}
+                  >
+                    <View style={styles.chipContent}>
+                      {redeemState === "full" ? (
+                        <Feather name="check-circle" size={12} color="#166534" />
+                      ) : redeemState === "partial" ? (
+                        <Feather name="clock" size={12} color="#92400e" />
+                      ) : (
+                        <Feather name="clock" size={12} color="#374151" />
+                      )}
+                      <Text
+                        style={[
+                          styles.heroDateStateChipLabel,
+                          redeemState === "full"
+                            ? styles.heroDateStateChipLabelRedeemed
+                            : redeemState === "partial"
+                              ? styles.heroDateStateChipLabelPartiallyRedeemed
+                              : null
+                        ]}
+                      >
+                        {redeemState === "full" ? "Redeemed" : redeemState === "partial" ? "Partially Redeemed" : stateLabel}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-                <View style={styles.heroBadge}>
-                  <Text style={styles.heroBadgeText}>{order.status.toUpperCase()}</Text>
-                </View>
-              </Pressable>
-            );
-          })}
+                  <View style={styles.heroBadge}>
+                    <Text style={styles.heroBadgeText}>{order.status.toUpperCase()}</Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
           {loadingMore ? <Text style={styles.meta}>Loading more orders...</Text> : null}
         </ScrollView>
 
         {filtersOpen ? (
-          <View style={styles.floatingFilterDock}>
+          <View style={[styles.floatingFilterDock, { left: -layout.screenPadding, right: -layout.screenPadding }]}>
             <View style={styles.filtersGrid}>
               <View style={styles.filterRowGrid}>
                 <Pressable
@@ -580,7 +586,7 @@ export default function OrdersScreen() {
             </View>
           </View>
         ) : null}
-        <View style={styles.actionsBar}>
+        <View style={[styles.actionsBar, { left: -layout.screenPadding, right: -layout.screenPadding }]}>
           <Pressable style={styles.actionsButton} onPress={() => setFiltersOpen((prev) => !prev)}>
             <Feather name="sliders" size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>{filtersOpen ? "Hide Filters" : "Filters"}</Text>
@@ -602,7 +608,7 @@ export default function OrdersScreen() {
             <Feather name={searchApplied ? "x-circle" : "search"} size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>{searchApplied ? "Clear Search" : "Search"}</Text>
           </Pressable>
-          <Pressable style={styles.actionsButton} onPress={() => router.push("/scan-ticket")}>
+          <Pressable style={styles.actionsButton} onPress={() => router.push("/(tabs)/scans")}>
             <Ionicons name="qr-code-outline" size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>Scan</Text>
           </Pressable>
@@ -616,7 +622,7 @@ export default function OrdersScreen() {
         onRequestClose={() => setSearchModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: layout.modalMaxWidth, alignSelf: "center", width: "100%" }]}>
             <Text style={styles.modalTitle}>Search Orders</Text>
             <TextInput
               style={styles.modalInput}
@@ -675,6 +681,14 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 118
+  },
+  scrollContentTablet: {
+    paddingBottom: 128
+  },
+  cardsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10
   },
   filterSection: {
     marginBottom: 12,

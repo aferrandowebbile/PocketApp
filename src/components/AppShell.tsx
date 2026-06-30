@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 export function AppShell({
   title,
@@ -15,12 +16,31 @@ export function AppShell({
   hideHeader?: boolean;
   children: React.ReactNode;
 }) {
+  const layout = useResponsiveLayout();
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <StatusBar style="light" backgroundColor="#000000" />
-      <View style={styles.container}>
+      <View style={styles.viewport}>
+        <View
+          style={[
+            styles.container,
+            {
+              maxWidth: layout.contentMaxWidth,
+              paddingHorizontal: layout.screenPadding
+            }
+          ]}
+        >
         {!hideHeader ? (
-          <View style={styles.titleRow}>
+          <View
+            style={[
+              styles.titleRow,
+              {
+                marginHorizontal: -layout.screenPadding,
+                paddingHorizontal: layout.screenPadding
+              }
+            ]}
+          >
             <Text style={styles.title}>{title}</Text>
             {titleChip ? (
               <View style={styles.chip}>
@@ -30,6 +50,7 @@ export function AppShell({
           </View>
         ) : null}
         {children}
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -40,8 +61,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#000000"
   },
+  viewport: {
+    flex: 1,
+    alignItems: "center",
+    backgroundColor: theme.colors.background
+  },
   container: {
     flex: 1,
+    width: "100%",
     paddingHorizontal: 16,
     paddingTop: 12,
     backgroundColor: theme.colors.background

@@ -5,6 +5,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { AppShell } from "@/components/AppShell";
 import { Card } from "@/components/Card";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
 import { cacheOrder, getCachedOrder } from "@/lib/orderStore";
 import { getOrderById, type RemoteOrder } from "@/services/ordersClient";
@@ -333,6 +334,7 @@ function getProductTimeState(value: string | null): ProductTimeState {
 
 export default function OrderDetailScreen() {
   const { profile } = useAuth();
+  const layout = useResponsiveLayout();
   const params = useLocalSearchParams<OrderDetailParams>();
   const tenantIdFromRoute = paramString(params.tenantId);
   const tenantId = tenantIdFromRoute || profile?.connect_client_id || undefined;
@@ -401,6 +403,7 @@ export default function OrderDetailScreen() {
   const eligibleForRedeem = Boolean(id) && ["completed", "valid"].includes(normalizedStatus);
   const canRedeem = eligibleForRedeem && !fullyRedeemed && !validatedAt;
   const canRevokeRedeem = eligibleForRedeem && fullyRedeemed;
+  const productCardWidth = layout.cardColumns === 3 ? "31.5%" : layout.cardColumns === 2 ? "48.5%" : "100%";
   const blockedReason =
     fullyRedeemed || validatedAt
       ? "Order already redeemed"
@@ -452,7 +455,10 @@ export default function OrderDetailScreen() {
   return (
     <AppShell title="Order Detail">
       <View style={styles.screen}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scrollContent, layout.isTablet ? styles.scrollContentTablet : null]}
+      >
         <Pressable
           style={styles.back}
           onPress={() => {
@@ -466,113 +472,119 @@ export default function OrderDetailScreen() {
           <Text style={styles.backLabel}>Back to orders</Text>
         </Pressable>
 
-        <View style={[styles.hero, fullyRedeemed ? styles.heroRedeemed : null]}>
-          <Text style={styles.orderId}>#{id || "N/A"}</Text>
-          <Text style={styles.guest}>{guestName}</Text>
-          <Text style={styles.date}>{formatMaybeDate(date) ?? "-"}</Text>
-          {startDate ? <Text style={styles.date}>Start date: {formatMaybeDate(startDate) ?? "-"}</Text> : null}
-          {orderLoading ? <Text style={styles.date}>Refreshing order from API...</Text> : null}
-          {orderError ? <Text style={styles.errorText}>{orderError}</Text> : null}
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{status.toUpperCase()}</Text>
+        <View style={[styles.topGrid, layout.isTablet ? styles.topGridTablet : null]}>
+          <View style={[styles.hero, fullyRedeemed ? styles.heroRedeemed : null, layout.isTablet ? styles.heroTablet : null]}>
+            <Text style={styles.orderId}>#{id || "N/A"}</Text>
+            <Text style={styles.guest}>{guestName}</Text>
+            <Text style={styles.date}>{formatMaybeDate(date) ?? "-"}</Text>
+            {startDate ? <Text style={styles.date}>Start date: {formatMaybeDate(startDate) ?? "-"}</Text> : null}
+            {orderLoading ? <Text style={styles.date}>Refreshing order from API...</Text> : null}
+            {orderError ? <Text style={styles.errorText}>{orderError}</Text> : null}
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{status.toUpperCase()}</Text>
+            </View>
+          </View>
+
+          <View style={[styles.totalsCard, layout.isTablet ? styles.totalsCardTablet : null]}>
+            <Text style={styles.sectionTitle}>Products</Text>
+            <Text style={styles.totalsRow}>{`Number of products: ${totals.numProducts ?? productCountFallback}`}</Text>
+            <Text style={styles.totalsRow}>{`Price: ${totalsPrice}`}</Text>
+            <View style={styles.validateWrap}>
+              <Text style={[styles.validateNote, blockedReason ? styles.validateBlocked : styles.validateAllowed]}>
+                {itemActionMessage ?? blockedReason ?? "Tap an item to show redeem actions."}
+              </Text>
+              {validatedAt ? <Text style={styles.validatedAt}>Redeemed at {new Date(validatedAt).toLocaleString()}</Text> : null}
+            </View>
           </View>
         </View>
-
-        <Text style={styles.sectionTitle}>Products</Text>
-        <View style={styles.totalsCard}>
-          <Text style={styles.totalsRow}>{`Number of products: ${totals.numProducts ?? productCountFallback}`}</Text>
-          <Text style={styles.totalsRow}>{`Price: ${totalsPrice}`}</Text>
-        </View>
         {productLines.length ? (
-          productLines.map((line, index) => {
-            const timeState = getProductTimeState(line.startDate);
-            const meta = timeStateMeta[timeState];
-            const lineRedeemed = lineRedeemedOverrides[line.lineNumber] ?? line.redeemed;
-            const productCardStyle = lineRedeemed ? styles.productCardRedeemed : meta.cardStyle;
-            return (
-              <Pressable
-                key={`${line.name}-${index}`}
-                style={[styles.productCard, productCardStyle, selectedItemIndex === index ? styles.productCardSelected : null]}
-                onPress={() => setSelectedItemIndex((prev) => (prev === index ? null : index))}
-              >
-                <View style={[styles.productStateChip, lineRedeemed ? styles.productChipRedeemed : meta.chipStyle]}>
-                  <View style={styles.chipContent}>
-                    {lineRedeemed ? (
-                      <Feather name="check-circle" size={12} color="#166534" />
-                    ) : (
-                      <Feather name="clock" size={12} color="#374151" />
-                    )}
-                    <Text style={[styles.productStateChipLabel, lineRedeemed ? styles.productStateChipLabelRedeemed : null]}>
-                      {lineRedeemed ? "Redeemed" : meta.label}
-                    </Text>
+          <View style={styles.productsGrid}>
+            {productLines.map((line, index) => {
+              const timeState = getProductTimeState(line.startDate);
+              const meta = timeStateMeta[timeState];
+              const lineRedeemed = lineRedeemedOverrides[line.lineNumber] ?? line.redeemed;
+              const productCardStyle = lineRedeemed ? styles.productCardRedeemed : meta.cardStyle;
+              return (
+                <Pressable
+                  key={`${line.name}-${index}`}
+                  style={[styles.productCard, productCardStyle, selectedItemIndex === index ? styles.productCardSelected : null, { width: productCardWidth }]}
+                  onPress={() => setSelectedItemIndex((prev) => (prev === index ? null : index))}
+                >
+                  <View style={[styles.productStateChip, lineRedeemed ? styles.productChipRedeemed : meta.chipStyle]}>
+                    <View style={styles.chipContent}>
+                      {lineRedeemed ? (
+                        <Feather name="check-circle" size={12} color="#166534" />
+                      ) : (
+                        <Feather name="clock" size={12} color="#374151" />
+                      )}
+                      <Text style={[styles.productStateChipLabel, lineRedeemed ? styles.productStateChipLabelRedeemed : null]}>
+                        {lineRedeemed ? "Redeemed" : meta.label}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-                {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
-                <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
-                {line.firstName || line.lastName ? (
-                  <Text style={styles.productRow}>{`Person: ${[line.firstName, line.lastName].filter(Boolean).join(" ")}`}</Text>
-                ) : null}
-                <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
-                {line.startDate ? <Text style={styles.productRow}>{`Start Date: ${formatMaybeDate(line.startDate) ?? "-"}`}</Text> : null}
-                {selectedItemIndex === index ? (
-                  <View style={styles.itemActions}>
-                    {lineRedeemed ? (
-                      <Pressable
-                        style={[styles.itemButton, styles.itemButtonRefund, actionLoading === "revoke-item" ? styles.bottomDisabled : null]}
-                        disabled={actionLoading !== null}
-                        onPress={async () => {
-                          try {
-                            setActionLoading("revoke-item");
-                            const response = await redeemsClient.revokeProduct(id, line.lineNumber);
-                            setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: false }));
-                            if (response.result?.order_redeem_revoked === true) setOrderRedeemedOverride(false);
-                            setItemActionMessage(response.message || `Product redeem revoked: ${line.name}`);
-                          } catch (error) {
-                            setItemActionMessage(error instanceof Error ? error.message : "Revoke product redeem failed.");
-                          } finally {
-                            setActionLoading(null);
-                          }
-                        }}
-                      >
-                        <Text style={styles.itemButtonLabel}>{actionLoading === "revoke-item" ? "Revoking..." : "Revoke Redeem"}</Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      style={[styles.itemButton, styles.itemButtonValidate, actionLoading === "redeem-item" ? styles.bottomDisabled : null]}
-                      disabled={actionLoading !== null || lineRedeemed}
-                      onPress={async () => {
-                        try {
-                          setActionLoading("redeem-item");
-                          const response = await redeemsClient.redeemProduct(id, line.lineNumber);
-                          setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: true }));
-                          if (response.result?.order_redeemed === true) setOrderRedeemedOverride(true);
-                          setItemActionMessage(response.message || `Product redeemed: ${line.name}`);
-                        } catch (error) {
-                          setItemActionMessage(error instanceof Error ? error.message : "Redeem product failed.");
-                        } finally {
-                          setActionLoading(null);
-                        }
-                      }}
-                    >
-                      <Text style={styles.itemButtonLabel}>{actionLoading === "redeem-item" ? "Redeeming..." : lineRedeemed ? "Redeemed" : "Redeem Product"}</Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          })
+                  {line.imageUrl ? <Image source={{ uri: line.imageUrl }} style={styles.productImage} resizeMode="cover" /> : null}
+                  <Text style={styles.productTitle}>{`${index + 1}. Product: ${line.name}`}</Text>
+                  {line.firstName || line.lastName ? (
+                    <Text style={styles.productRow}>{`Person: ${[line.firstName, line.lastName].filter(Boolean).join(" ")}`}</Text>
+                  ) : null}
+                  <Text style={styles.productRow}>{`Price: ${line.amount !== null ? `${line.amount}${line.currency ? ` ${line.currency}` : ""}` : "-"}`}</Text>
+                  {line.startDate ? <Text style={styles.productRow}>{`Start Date: ${formatMaybeDate(line.startDate) ?? "-"}`}</Text> : null}
+                  {selectedItemIndex === index ? (
+                    <View style={styles.itemActions}>
+                      {lineRedeemed ? (
+                        <Pressable
+                          style={[styles.itemButton, styles.itemButtonRefund, actionLoading === "revoke-item" ? styles.bottomDisabled : null]}
+                          disabled={actionLoading !== null}
+                          onPress={async () => {
+                            try {
+                              setActionLoading("revoke-item");
+                              const response = await redeemsClient.revokeProduct(id, line.lineNumber);
+                              setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: false }));
+                              if (response.result?.order_redeem_revoked === true) setOrderRedeemedOverride(false);
+                              setItemActionMessage(response.message || `Product redeem revoked: ${line.name}`);
+                            } catch (error) {
+                              setItemActionMessage(error instanceof Error ? error.message : "Revoke product redeem failed.");
+                            } finally {
+                              setActionLoading(null);
+                            }
+                          }}
+                        >
+                          <Text style={styles.itemButtonLabel}>{actionLoading === "revoke-item" ? "Revoking..." : "Revoke Redeem"}</Text>
+                        </Pressable>
+                      ) : null}
+                      {!lineRedeemed ? (
+                        <Pressable
+                          style={[styles.itemButton, styles.itemButtonValidate, actionLoading === "redeem-item" ? styles.bottomDisabled : null]}
+                          disabled={actionLoading !== null}
+                          onPress={async () => {
+                            try {
+                              setActionLoading("redeem-item");
+                              const response = await redeemsClient.redeemProduct(id, line.lineNumber);
+                              setLineRedeemedOverrides((prev) => ({ ...prev, [line.lineNumber]: true }));
+                              if (response.result?.order_redeemed === true) setOrderRedeemedOverride(true);
+                              setItemActionMessage(response.message || `Product redeemed: ${line.name}`);
+                            } catch (error) {
+                              setItemActionMessage(error instanceof Error ? error.message : "Redeem product failed.");
+                            } finally {
+                              setActionLoading(null);
+                            }
+                          }}
+                        >
+                          <Text style={styles.itemButtonLabel}>{actionLoading === "redeem-item" ? "Redeeming..." : "Redeem Item"}</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
         ) : (
           <Card title={product} subtitle={`Quantity: ${quantity}\nAmount: ${formattedTotal}`} />
         )}
-        <View style={styles.validateWrap}>
-          <Text style={[styles.validateNote, blockedReason ? styles.validateBlocked : styles.validateAllowed]}>
-            {itemActionMessage ?? blockedReason ?? "Tap an item to show redeem actions."}
-          </Text>
-          {validatedAt ? <Text style={styles.validatedAt}>Redeemed at {new Date(validatedAt).toLocaleString()}</Text> : null}
-        </View>
 
       </ScrollView>
-      <View style={styles.bottomBar}>
+      <View style={[styles.bottomBar, { left: -layout.screenPadding, right: -layout.screenPadding }]}>
         {canRevokeRedeem ? (
           <Pressable
             style={[styles.bottomButton, styles.bottomRefund, actionLoading !== null ? styles.bottomDisabled : null]}
@@ -593,7 +605,7 @@ export default function OrderDetailScreen() {
             }}
           >
             <Text style={styles.bottomButtonLabel}>
-              {actionLoading === "revoke-order" ? "Revoking..." : "Revoke"}
+              {actionLoading === "revoke-order" ? "Revoking..." : "Revoke All Items"}
             </Text>
           </Pressable>
         ) : null}
@@ -616,7 +628,7 @@ export default function OrderDetailScreen() {
           }}
         >
           <Text style={styles.bottomButtonLabel}>
-            {actionLoading === "redeem-order" ? "Redeeming..." : validatedAt ? "Redeemed" : "Redeem"}
+            {actionLoading === "redeem-order" ? "Redeeming..." : "Redeem All Items"}
           </Text>
         </Pressable>
       </View>
@@ -647,6 +659,17 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     padding: 16,
     marginBottom: 12
+  },
+  heroTablet: {
+    flex: 1.2,
+    marginBottom: 0
+  },
+  topGrid: {
+    gap: 12
+  },
+  topGridTablet: {
+    flexDirection: "row",
+    alignItems: "stretch"
   },
   heroRedeemed: {
     backgroundColor: "#f0fdf4",
@@ -716,6 +739,10 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     backgroundColor: "#ffffff"
   },
+  totalsCardTablet: {
+    flex: 0.8,
+    marginBottom: 0
+  },
   totalsRow: {
     color: theme.colors.text,
     fontWeight: "700",
@@ -728,6 +755,11 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 12,
     backgroundColor: "#fff"
+  },
+  productsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12
   },
   productCardPast: {
     backgroundColor: "#fafafa",
@@ -830,6 +862,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 96
+  },
+  scrollContentTablet: {
+    paddingBottom: 108
   },
   bottomBar: {
     position: "absolute",

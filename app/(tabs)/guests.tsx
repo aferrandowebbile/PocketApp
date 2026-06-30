@@ -5,6 +5,7 @@ import { Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInp
 import { AppShell } from "@/components/AppShell";
 import { theme } from "@/constants/theme";
 import { cacheGuest } from "@/lib/guestStore";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
 import { listGuestsPage, type GuestsPagingInfo, type RemoteGuest } from "@/services/guestsClient";
 
@@ -13,6 +14,7 @@ const defaultSort = "completed_at_day:desc";
 
 export default function GuestsScreen() {
   const { profile } = useAuth();
+  const layout = useResponsiveLayout();
   const tenantId = profile?.connect_client_id ?? undefined;
   const [guests, setGuests] = useState<RemoteGuest[]>([]);
   const [offset, setOffset] = useState(0);
@@ -83,6 +85,7 @@ export default function GuestsScreen() {
   const canPrev = paging.start > 0 && !loading && !loadingMore;
   const canNext = !loading && !loadingMore && (paging.total === null ? guests.length >= paging.limit : paging.start + paging.limit < paging.total);
   const canLoadMore = paging.total === null ? guests.length >= paging.limit : guests.length < paging.total;
+  const listCardWidth = layout.cardColumns === 3 ? "31.5%" : layout.cardColumns === 2 ? "48.5%" : "100%";
 
   const guestsTitleChip = paging.total === null ? "-" : String(paging.total);
 
@@ -92,7 +95,7 @@ export default function GuestsScreen() {
         <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(offset, "refresh", searchCustomer)} />}
           stickyHeaderIndices={[0]}
-          contentContainerStyle={styles.content}
+          contentContainerStyle={[styles.content, layout.isTablet ? styles.contentTablet : null]}
           scrollEventThrottle={16}
           onScroll={({ nativeEvent }) => {
             const nearBottom =
@@ -141,39 +144,41 @@ export default function GuestsScreen() {
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {!loading && !error && !filteredGuests.length ? <Text style={styles.meta}>No guests found.</Text> : null}
 
-          {filteredGuests.map((guest) => (
-            <Pressable
-              key={guest.id}
-              style={styles.heroCard}
-              onPress={() => {
-                cacheGuest(guest);
-                router.push({
-                  pathname: "/guest/[id]",
-                  params: {
-                    id: guest.id,
-                    fullName: guest.fullName,
-                    email: guest.email ?? "",
-                    phone: guest.phone ?? "",
-                    externalRef: guest.externalRef ?? "",
-                    completedAt: guest.completedAt ?? "",
-                    createdAt: guest.createdAt ?? ""
-                  }
-                });
-              }}
-            >
-              <Text style={styles.heroOrderId}>#{guest.id}</Text>
-              <Text style={styles.heroGuest}>{guest.fullName}</Text>
-              <Text style={styles.heroMeta}>{`Email: ${guest.email ?? "-"}`}</Text>
-              <View style={styles.heroBadge}>
-                <Text style={styles.heroBadgeText}>GUEST</Text>
-              </View>
-            </Pressable>
-          ))}
+          <View style={styles.cardsGrid}>
+            {filteredGuests.map((guest) => (
+              <Pressable
+                key={guest.id}
+                style={[styles.heroCard, { width: listCardWidth }]}
+                onPress={() => {
+                  cacheGuest(guest);
+                  router.push({
+                    pathname: "/guest/[id]",
+                    params: {
+                      id: guest.id,
+                      fullName: guest.fullName,
+                      email: guest.email ?? "",
+                      phone: guest.phone ?? "",
+                      externalRef: guest.externalRef ?? "",
+                      completedAt: guest.completedAt ?? "",
+                      createdAt: guest.createdAt ?? ""
+                    }
+                  });
+                }}
+              >
+                <Text style={styles.heroOrderId}>#{guest.id}</Text>
+                <Text style={styles.heroGuest}>{guest.fullName}</Text>
+                <Text style={styles.heroMeta}>{`Email: ${guest.email ?? "-"}`}</Text>
+                <View style={styles.heroBadge}>
+                  <Text style={styles.heroBadgeText}>GUEST</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
           {loadingMore ? <Text style={styles.meta}>Loading more guests...</Text> : null}
         </ScrollView>
 
         {filtersOpen ? (
-          <View style={styles.floatingFilterDock}>
+          <View style={[styles.floatingFilterDock, { left: -layout.screenPadding, right: -layout.screenPadding }]}>
             <View style={styles.filterRowGrid}>
               <Pressable
                 style={[styles.chip, !search ? styles.chipActive : null]}
@@ -223,7 +228,7 @@ export default function GuestsScreen() {
             </View>
           </View>
         ) : null}
-        <View style={styles.actionsBar}>
+        <View style={[styles.actionsBar, { left: -layout.screenPadding, right: -layout.screenPadding }]}>
           <Pressable style={styles.actionsButton} onPress={() => setFiltersOpen((prev) => !prev)}>
             <Feather name="sliders" size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>{filtersOpen ? "Hide Filters" : "Filters"}</Text>
@@ -247,7 +252,7 @@ export default function GuestsScreen() {
             <Feather name={search ? "x-circle" : "search"} size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>{search ? "Clear Search" : "Search"}</Text>
           </Pressable>
-          <Pressable style={styles.actionsButton} onPress={() => router.push("/scan-ticket")}>
+          <Pressable style={styles.actionsButton} onPress={() => router.push("/(tabs)/scans")}>
             <Ionicons name="qr-code-outline" size={16} color="#ff4fbe" />
             <Text style={styles.actionsButtonLabel}>Scan</Text>
           </Pressable>
@@ -261,7 +266,7 @@ export default function GuestsScreen() {
         onRequestClose={() => setSearchModalVisible(false)}
       >
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: layout.modalMaxWidth, alignSelf: "center", width: "100%" }]}>
             <Text style={styles.modalTitle}>Search Guests</Text>
             <TextInput
               style={styles.modalInput}
@@ -315,6 +320,14 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 118
+  },
+  contentTablet: {
+    paddingBottom: 128
+  },
+  cardsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10
   },
   searchWrap: {
     marginBottom: 12,

@@ -6,9 +6,11 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { theme } from "@/constants/theme";
 import { useAuth } from "@/lib/auth";
 import { directusConfigError } from "@/lib/directusAuth";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 
 export default function LoginScreen() {
   const { session, signInWithPassword, sites, selectedSiteAlias, selectSite, signOut } = useAuth();
+  const layout = useResponsiveLayout();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export default function LoginScreen() {
   if (session) {
     return (
       <AppShell title="Spotlio Control">
-        <View style={styles.sitePicker}>
+        <View style={[styles.sitePicker, layout.isTablet ? styles.sitePickerTablet : null]}>
           <Text style={styles.kicker}>Site Access</Text>
           <Text style={styles.title}>Choose a site</Text>
           <Text style={styles.subtitle}>This site will be used as the Connect API client for orders, guests, commerce, and scans.</Text>
@@ -84,47 +86,49 @@ export default function LoginScreen() {
   return (
     <AppShell title="Spotlio Control">
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.wrapper}>
-        <View style={styles.hero}>
-          <View style={styles.heroGlowLarge} />
-          <View style={styles.heroGlowSmall} />
-          <Text style={styles.kicker}>Operations Access</Text>
-          <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.subtitle}>Sign in to manage guests, orders, and commerce operations.</Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            placeholder="name@company.com"
-            placeholderTextColor="#9ca3af"
-            value={email}
-            onChangeText={setEmail}
-            editable={!busy}
-          />
-
-          <Text style={styles.label}>Password</Text>
-          <View style={styles.passwordWrap}>
-            <TextInput
-              style={styles.passwordInput}
-              secureTextEntry={!showPassword}
-              placeholder="Enter your password"
-              placeholderTextColor="#9ca3af"
-              value={password}
-              onChangeText={setPassword}
-              editable={!busy}
-            />
-            <Pressable onPress={() => setShowPassword((prev) => !prev)} style={styles.toggle} disabled={busy}>
-              <Text style={styles.toggleLabel}>{showPassword ? "Hide" : "Show"}</Text>
-            </Pressable>
+        <View style={[styles.authGrid, layout.isTablet ? styles.authGridTablet : null]}>
+          <View style={[styles.hero, layout.isTablet ? styles.heroTablet : null]}>
+            <View style={styles.heroGlowLarge} />
+            <View style={styles.heroGlowSmall} />
+            <Text style={styles.kicker}>Operations Access</Text>
+            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>Sign in to manage guests, orders, and commerce operations.</Text>
           </View>
 
-          {directusConfigError ? <Text style={styles.error}>{directusConfigError}</Text> : null}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-          <PrimaryButton label={busy ? "Signing in..." : "Sign in"} onPress={onEmailLogin} disabled={busy} />
+          <View style={[styles.card, layout.isTablet ? styles.cardTablet : null]}>
+            <Text style={styles.label}>Email</Text>
+            <TextInput
+              style={styles.input}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              placeholder="name@company.com"
+              placeholderTextColor="#9ca3af"
+              value={email}
+              onChangeText={setEmail}
+              editable={!busy}
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordWrap}>
+              <TextInput
+                style={styles.passwordInput}
+                secureTextEntry={!showPassword}
+                placeholder="Enter your password"
+                placeholderTextColor="#9ca3af"
+                value={password}
+                onChangeText={setPassword}
+                editable={!busy}
+              />
+              <Pressable onPress={() => setShowPassword((prev) => !prev)} style={styles.toggle} disabled={busy}>
+                <Text style={styles.toggleLabel}>{showPassword ? "Hide" : "Show"}</Text>
+              </Pressable>
+            </View>
+
+            {directusConfigError ? <Text style={styles.error}>{directusConfigError}</Text> : null}
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <PrimaryButton label={busy ? "Signing in..." : "Sign in"} onPress={onEmailLogin} disabled={busy} />
+          </View>
         </View>
       </KeyboardAvoidingView>
     </AppShell>
@@ -136,6 +140,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background
   },
+  authGrid: {
+    flex: 1
+  },
+  authGridTablet: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 18
+  },
   hero: {
     borderWidth: 1,
     borderColor: "#ffd7ef",
@@ -144,6 +156,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     backgroundColor: "#fff8fc",
     overflow: "hidden"
+  },
+  heroTablet: {
+    flex: 1,
+    marginBottom: 0,
+    minHeight: 280,
+    justifyContent: "center"
   },
   heroGlowLarge: {
     position: "absolute",
@@ -190,6 +208,10 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: "#fff"
   },
+  cardTablet: {
+    flex: 1,
+    justifyContent: "center"
+  },
   label: {
     color: theme.colors.text,
     fontWeight: "700",
@@ -233,6 +255,11 @@ const styles = StyleSheet.create({
   sitePicker: {
     flex: 1,
     gap: 12
+  },
+  sitePickerTablet: {
+    alignSelf: "center",
+    width: "100%",
+    maxWidth: 720
   },
   siteList: {
     gap: 10,

@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { Animated, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Animated, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
 import { canAccessCommerce } from "@/lib/permissions";
 import { getOperatorDashboard, type OperatorDashboard } from "@/services/db/dashboard";
@@ -35,8 +36,9 @@ function isBetween(date: Date, start: Date, end: Date): boolean {
   return time >= start.getTime() && time <= end.getTime();
 }
 
-type RangePreset = "today" | "yesterday" | "week" | "month" | "custom";
+type RangePreset = "today" | "yesterday" | "week" | "month" | "total" | "custom";
 type DateRange = { startDateIso: string; endDateIso: string };
+const TOTAL_RANGE_START = "2000-01-01";
 
 function getPresetRange(preset: Exclude<RangePreset, "custom">): DateRange {
   const today = new Date();
@@ -52,6 +54,10 @@ function getPresetRange(preset: Exclude<RangePreset, "custom">): DateRange {
 
   if (preset === "month") {
     return { startDateIso: toIsoDate(addDays(today, -30)), endDateIso: toIsoDate(today) };
+  }
+
+  if (preset === "total") {
+    return { startDateIso: TOTAL_RANGE_START, endDateIso: toIsoDate(today) };
   }
 
   return { startDateIso: toIsoDate(addDays(today, -7)), endDateIso: toIsoDate(today) };
@@ -94,6 +100,8 @@ function buildMockDashboard(): OperatorDashboard {
     status: "on_track",
     totalRevenue: 76614,
     currency: "USD",
+    totalGuests: 857,
+    totalProductsSold: 1322,
     mobileRevenue: 55752,
     desktopRevenue: 20862,
     arrivalsExpected: 1322,
@@ -141,45 +149,21 @@ function SparkBars({ values, color = "#ff4fbe", soft = false }: { values: number
 function MiniMetric({
   icon,
   label,
-  value,
-  hint
+  value
 }: {
   icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string;
-  hint: string;
 }) {
   return (
     <View style={styles.miniMetric}>
-      <Feather name={icon} size={19} color="#ff4fbe" />
+      <View style={styles.miniMetricIconWrap}>
+        <Feather name={icon} size={18} color="#ff4fbe" />
+      </View>
       <View style={styles.miniMetricText}>
         <Text style={styles.miniLabel}>{label}</Text>
         <Text style={styles.miniValue}>{value}</Text>
-        <Text style={styles.miniHint}>{hint}</Text>
       </View>
-    </View>
-  );
-}
-
-function PerfCard({
-  title,
-  value,
-  trend,
-  values,
-  positive = true
-}: {
-  title: string;
-  value: string;
-  trend: string;
-  values?: number[];
-  positive?: boolean;
-}) {
-  return (
-    <View style={styles.perfCard}>
-      <Text style={styles.perfTitle}>{title}</Text>
-      <Text style={styles.perfValue}>{value}</Text>
-      {values ? <SparkBars values={values} soft /> : <Feather name="shopping-bag" size={28} color="#ff9bd8" style={styles.perfIcon} />}
-      <Text style={[styles.perfTrend, positive ? styles.trendPositive : styles.trendNegative]}>{trend}</Text>
     </View>
   );
 }
@@ -295,9 +279,10 @@ function CalendarRangePicker({
 
 export default function HomeScreen() {
   const { profile, selectedSite, selectedSiteApiToken, selectedSiteAlias, sites, selectSite } = useAuth();
+  const layout = useResponsiveLayout();
   const [dashboard, setDashboard] = useState<OperatorDashboard>(buildMockDashboard);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rangePreset, setRangePreset] = useState<RangePreset>("week");
   const [dateRange, setDateRange] = useState<DateRange>(() => getPresetRange("week"));
@@ -308,7 +293,7 @@ export default function HomeScreen() {
   const livePulse = React.useRef(new Animated.Value(1)).current;
 
   const roleCanOperate = canAccessCommerce(profile);
-  const dateRangeLabel = useMemo(() => formatDateRange(dateRange), [dateRange]);
+  const dateRangeLabel = useMemo(() => (rangePreset === "total" ? "Total" : formatDateRange(dateRange)), [dateRange, rangePreset]);
   const lastUpdatedLabel = useMemo(() => {
     if (!lastUpdatedAt) return "Last updated -";
     return `Last updated ${new Intl.DateTimeFormat(undefined, {
@@ -319,13 +304,14 @@ export default function HomeScreen() {
   }, [lastUpdatedAt]);
   const mobileShare = dashboard.totalRevenue ? (dashboard.mobileRevenue / dashboard.totalRevenue) * 100 : 0;
   const siteName = titleCaseSite(selectedSiteAlias);
+  const quickActionWidth = layout.cardColumns >= 2 ? "48.5%" : "100%";
   const applyPreset = (preset: Exclude<RangePreset, "custom">) => {
     setRangePreset(preset);
     setDateRange(getPresetRange(preset));
   };
 
   const loadDashboard = useCallback(async () => {
-    setLoading(true);
+    setLoadingDashboard(true);
     setError(null);
     try {
       const data = await getOperatorDashboard({
@@ -342,7 +328,7 @@ export default function HomeScreen() {
       setLastUpdatedAt(new Date());
       setError(loadError instanceof Error ? loadError.message : "Failed to load dashboard.");
     } finally {
-      setLoading(false);
+      setLoadingDashboard(false);
     }
   }, [dateRange.endDateIso, dateRange.startDateIso, profile?.company_id, selectedSiteApiToken]);
 
@@ -376,10 +362,10 @@ export default function HomeScreen() {
   }, [loadDashboard]);
 
   return (
-    <AppShell title="Dashboard" hideHeader>
+    <AppShell title="Home" hideHeader>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, layout.isTablet ? styles.contentTablet : null]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#ff4fbe" />}
       >
         <View style={styles.header}>
@@ -424,6 +410,9 @@ export default function HomeScreen() {
           <Pressable style={[styles.calendarChip, rangePreset === "custom" ? styles.rangeChipActive : null]} onPress={() => setCalendarOpen(true)}>
             <Feather name="calendar" size={16} color={rangePreset === "custom" ? "#fff" : "#ff4fbe"} />
           </Pressable>
+          <Pressable style={[styles.rangeChip, rangePreset === "total" ? styles.rangeChipActive : null]} onPress={() => applyPreset("total")}>
+            <Text style={[styles.rangeChipText, rangePreset === "total" ? styles.rangeChipTextActive : null]}>Total</Text>
+          </Pressable>
         </View>
 
         <View style={styles.revenueCard}>
@@ -443,37 +432,38 @@ export default function HomeScreen() {
           </View>
           <SparkBars values={dashboard.checkinsByHour} />
           <View style={styles.metricsGrid}>
-            <MiniMetric icon="shopping-bag" label="Orders" value={String(dashboard.arrivalsArrived)} hint="View all" />
-            <MiniMetric icon="smartphone" label="Mobile Orders" value={String(dashboard.pendingCheckins2h)} hint={`${mobileShare.toFixed(1)}%`} />
-            <MiniMetric icon="users" label="Guests" value={String(dashboard.arrivalsExpected)} hint="Products sold" />
-            <MiniMetric icon="clock" label="Desktop Orders" value={String(dashboard.checkinsLast60m)} hint="Export range" />
+            <View style={styles.metricCellThird}>
+              <MiniMetric icon="shopping-bag" label="Orders" value={String(dashboard.arrivalsArrived)} />
+            </View>
+            <View style={styles.metricCellThird}>
+              <MiniMetric icon="smartphone" label="Mobile" value={String(dashboard.pendingCheckins2h)} />
+            </View>
+            <View style={styles.metricCellThird}>
+              <MiniMetric icon="monitor" label="Desktop" value={String(dashboard.checkinsLast60m)} />
+            </View>
+            <View style={styles.metricCellHalf}>
+              <MiniMetric icon="users" label="Guests" value={String(dashboard.totalGuests)} />
+            </View>
+            <View style={styles.metricCellHalf}>
+              <MiniMetric icon="package" label="Products Sold" value={String(dashboard.totalProductsSold)} />
+            </View>
           </View>
         </View>
 
         <Text style={styles.sectionTitle}>Quick actions</Text>
-        <View style={styles.quickActions}>
-          <Pressable style={[styles.quickAction, styles.quickActionPrimary]} onPress={() => router.push("/scan-ticket")} disabled={!roleCanOperate}>
+        <View style={[styles.quickActions, layout.isTablet ? styles.quickActionsTablet : null]}>
+          <Pressable
+            style={[styles.quickAction, styles.quickActionPrimary, { width: quickActionWidth }]}
+            onPress={() => router.push("/(tabs)/scans")}
+            disabled={!roleCanOperate}
+          >
             <Feather name="maximize" size={21} color="#fff" />
             <Text style={styles.quickActionPrimaryText}>Scan Ticket</Text>
           </Pressable>
-          <Pressable style={styles.quickAction} onPress={() => router.push("/(tabs)/guests")}>
+          <Pressable style={[styles.quickAction, { width: quickActionWidth }]} onPress={() => router.push("/(tabs)/guests")}>
             <Feather name="search" size={22} color="#ff4fbe" />
             <Text style={styles.quickActionText}>Search Guest</Text>
           </Pressable>
-        </View>
-
-        <Text style={styles.sectionTitle}>Performance overview</Text>
-        <View style={styles.performanceGrid}>
-          <PerfCard title="Mobile Share" value={`${mobileShare.toFixed(1)}%`} trend="↑ 6.2%" values={dashboard.invalidScansByHour} />
-          <PerfCard title="Products Sold" value={String(dashboard.arrivalsExpected)} trend="↑ 14%" values={dashboard.checkinsByHour} />
-          <PerfCard title="Products Listed" value={String(dashboard.invalidScans)} trend="-" positive />
-          <PerfCard
-            title="Desktop Revenue"
-            value={formatCompactCurrency(dashboard.desktopRevenue, dashboard.currency)}
-            trend="↓ 4%"
-            values={dashboard.noShowByHour}
-            positive={false}
-          />
         </View>
 
         <Text style={styles.sectionTitle}>Revenue by hour</Text>
@@ -517,9 +507,18 @@ export default function HomeScreen() {
           setCalendarOpen(false);
         }}
       />
+      <Modal visible={loadingDashboard} transparent animationType="fade">
+        <View style={styles.loadingBackdrop}>
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#ff4fbe" />
+            <Text style={styles.loadingTitle}>Loading Home</Text>
+            <Text style={styles.loadingText}>Refreshing totals and charts for the selected filter.</Text>
+          </View>
+        </View>
+      </Modal>
       <Modal visible={siteModalOpen} transparent animationType="fade" onRequestClose={() => setSiteModalOpen(false)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: layout.modalMaxWidth, alignSelf: "center", width: "100%" }]}>
             <Text style={styles.siteKicker}>Site Access</Text>
             <Text style={styles.modalTitle}>Choose a site</Text>
             <Text style={styles.modalSubtitle}>This site will be used as the Connect API client for orders, guests, dashboard and scans.</Text>
@@ -565,6 +564,9 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   content: {
     paddingBottom: 18
+  },
+  contentTablet: {
+    paddingBottom: 28
   },
   header: {
     flexDirection: "row",
@@ -742,32 +744,47 @@ const styles = StyleSheet.create({
     borderTopColor: "#e5e7eb",
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 14
-  },
-  miniMetric: {
-    width: "47%",
-    flexDirection: "row",
     gap: 10
   },
+  metricCellThird: {
+    width: "30.5%",
+    minWidth: 0
+  },
+  metricCellHalf: {
+    width: "47.5%",
+    minWidth: 0
+  },
+  miniMetric: {
+    width: "100%",
+    minHeight: 110,
+    borderWidth: 1,
+    borderColor: "#f0d8e8",
+    borderRadius: 16,
+    padding: 12,
+    backgroundColor: "#fff8fc"
+  },
+  miniMetricIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff"
+  },
   miniMetricText: {
-    flex: 1
+    flex: 1,
+    marginTop: 10
   },
   miniLabel: {
     color: "#2d3440",
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600"
   },
   miniValue: {
     marginTop: 3,
     color: "#0b1220",
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "800"
-  },
-  miniHint: {
-    marginTop: 6,
-    color: "#a1628f",
-    fontSize: 12,
-    fontWeight: "600"
   },
   sectionTitle: {
     color: "#0b1220",
@@ -777,11 +794,14 @@ const styles = StyleSheet.create({
   },
   quickActions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     marginBottom: 28
   },
+  quickActionsTablet: {
+    alignItems: "stretch"
+  },
   quickAction: {
-    flex: 1,
     minHeight: 72,
     borderRadius: 13,
     backgroundColor: "#fff5fb",
@@ -804,46 +824,6 @@ const styles = StyleSheet.create({
   quickActionPrimaryText: {
     color: "#fff",
     fontWeight: "800"
-  },
-  performanceGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    marginBottom: 24
-  },
-  perfCard: {
-    width: "48%",
-    minHeight: 150,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 15,
-    backgroundColor: "#fff",
-    padding: 14,
-    overflow: "hidden"
-  },
-  perfTitle: {
-    color: "#1f2937",
-    fontWeight: "700"
-  },
-  perfValue: {
-    marginTop: 14,
-    color: "#0b1220",
-    fontSize: 22,
-    fontWeight: "800"
-  },
-  perfTrend: {
-    marginTop: "auto",
-    fontWeight: "800"
-  },
-  trendPositive: {
-    color: "#13b878"
-  },
-  trendNegative: {
-    color: "#e33b5f"
-  },
-  perfIcon: {
-    marginTop: 18,
-    alignSelf: "flex-end"
   },
   chartCard: {
     borderWidth: 1,
@@ -1029,6 +1009,36 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(16, 24, 40, 0.35)",
     justifyContent: "center",
     padding: 20
+  },
+  loadingBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(16, 24, 40, 0.32)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20
+  },
+  loadingCard: {
+    width: "100%",
+    maxWidth: 320,
+    borderRadius: 20,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#f4bde0",
+    paddingVertical: 22,
+    paddingHorizontal: 18,
+    alignItems: "center"
+  },
+  loadingTitle: {
+    marginTop: 14,
+    color: theme.colors.text,
+    fontWeight: "800",
+    fontSize: 18
+  },
+  loadingText: {
+    marginTop: 8,
+    color: theme.colors.mutedText,
+    textAlign: "center",
+    lineHeight: 20
   },
   modalCard: {
     backgroundColor: "#fff",

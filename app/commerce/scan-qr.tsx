@@ -7,12 +7,14 @@ import { useIsFocused } from "@react-navigation/native";
 import { AppShell } from "@/components/AppShell";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { validatePurchaseToken } from "@/features/commerce/validation";
 import { useAuth } from "@/lib/auth";
 import { canAccessCommerce } from "@/lib/permissions";
 
 export default function ScanQrScreen() {
   const { profile } = useAuth();
+  const layout = useResponsiveLayout();
   const [permission, requestPermission] = useCameraPermissions();
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
@@ -65,50 +67,89 @@ export default function ScanQrScreen() {
 
   return (
     <AppShell title="Scan QR">
-      {!permission?.granted ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.message}>Camera permission is required to scan QR codes.</Text>
-          <PrimaryButton
-            label={permissionDeniedPermanently ? "Open settings" : "Allow camera"}
-            onPress={() => {
-              if (permissionDeniedPermanently) {
-                Linking.openSettings().catch(() => undefined);
-                return;
-              }
-              setCameraError(null);
-              requestPermission().catch(() => undefined);
-            }}
-          />
+      <View style={[styles.layout, layout.isTablet ? styles.layoutTablet : null]}>
+        {!permission?.granted ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.message}>Camera permission is required to scan QR codes.</Text>
+            <PrimaryButton
+              label={permissionDeniedPermanently ? "Open settings" : "Allow camera"}
+              onPress={() => {
+                if (permissionDeniedPermanently) {
+                  Linking.openSettings().catch(() => undefined);
+                  return;
+                }
+                setCameraError(null);
+                requestPermission().catch(() => undefined);
+              }}
+            />
+          </View>
+        ) : (
+          <View style={[styles.cameraWrap, layout.isTablet ? styles.cameraWrapTablet : null]} collapsable={false}>
+            <CameraView
+              key={`commerce-camera-${String(isFocused)}-${String(permission?.granted)}`}
+              style={styles.camera}
+              active={isFocused}
+              barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+              onBarcodeScanned={onScan}
+              onMountError={(event) => {
+                const details = event?.message ?? "Camera failed to mount.";
+                setCameraError(details);
+              }}
+            />
+          </View>
+        )}
+        <View style={[styles.sidePanel, layout.isTablet ? styles.sidePanelTablet : null]}>
+          <Text style={styles.panelTitle}>Commerce validation</Text>
+          <Text style={styles.panelText}>Use this screen for purchase QR validation. On tablets, keep the device in portrait for a larger live frame and faster rescans.</Text>
+          {cameraError ? <Text style={styles.errorText}>{cameraError}</Text> : null}
+          {validating ? <Text style={styles.status}>Validating scan...</Text> : null}
+          {message ? <Text style={styles.message}>{message}</Text> : null}
         </View>
-      ) : (
-        <View style={styles.cameraWrap} collapsable={false}>
-          <CameraView
-            key={`commerce-camera-${String(isFocused)}-${String(permission?.granted)}`}
-            style={styles.camera}
-            active={isFocused}
-            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-            onBarcodeScanned={onScan}
-            onMountError={(event) => {
-              const details = event?.message ?? "Camera failed to mount.";
-              setCameraError(details);
-            }}
-          />
-        </View>
-      )}
-      {cameraError ? <Text style={styles.errorText}>{cameraError}</Text> : null}
-      {validating ? <Text style={styles.status}>Validating scan...</Text> : null}
-      {message ? <Text style={styles.message}>{message}</Text> : null}
+      </View>
     </AppShell>
   );
 }
 
 const styles = StyleSheet.create({
+  layout: {
+    gap: 12
+  },
+  layoutTablet: {
+    flexDirection: "row",
+    alignItems: "flex-start"
+  },
   cameraWrap: {
     height: 320,
-    borderRadius: 14
+    borderRadius: 14,
+    overflow: "hidden"
+  },
+  cameraWrapTablet: {
+    flex: 1.15,
+    height: 440
   },
   camera: {
     flex: 1
+  },
+  sidePanel: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    padding: 16
+  },
+  sidePanelTablet: {
+    flex: 0.85,
+    minHeight: 220
+  },
+  panelTitle: {
+    color: theme.colors.text,
+    fontWeight: "800",
+    fontSize: 18
+  },
+  panelText: {
+    marginTop: 8,
+    color: theme.colors.mutedText,
+    lineHeight: 20
   },
   message: {
     marginTop: 12,

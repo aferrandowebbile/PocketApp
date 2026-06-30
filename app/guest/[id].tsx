@@ -3,6 +3,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
 import { getCachedGuest } from "@/lib/guestStore";
 import { cacheOrder } from "@/lib/orderStore";
@@ -32,6 +33,7 @@ function formatDate(value: string | null | undefined): string {
 
 export default function GuestDetailScreen() {
   const params = useLocalSearchParams<GuestDetailParams>();
+  const layout = useResponsiveLayout();
   const { profile } = useAuth();
   const tenantId = profile?.connect_client_id ?? undefined;
   const id = asParam(params.id);
@@ -48,6 +50,7 @@ export default function GuestDetailScreen() {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [openingOrderId, setOpeningOrderId] = React.useState<string | null>(null);
+  const orderCardWidth = layout.cardColumns === 3 ? "31.5%" : layout.cardColumns === 2 ? "48.5%" : "100%";
 
   const loadOrders = React.useCallback(async () => {
     if (!id) {
@@ -76,7 +79,7 @@ export default function GuestDetailScreen() {
 
   return (
     <AppShell title="Guest Detail">
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.content, layout.isTablet ? styles.contentTablet : null]} showsVerticalScrollIndicator={false}>
         <Pressable
           style={styles.back}
           onPress={() => {
@@ -90,17 +93,19 @@ export default function GuestDetailScreen() {
           <Text style={styles.backLabel}>Back to guests</Text>
         </Pressable>
 
-        <View style={styles.hero}>
-          <Text style={styles.id}>#{id || "N/A"}</Text>
-          <Text style={styles.name}>{fullName}</Text>
-          <Text style={styles.meta}>Purchase: {formatDate(completedAt)}</Text>
-          <Text style={styles.meta}>Created: {formatDate(createdAt)}</Text>
-        </View>
+        <View style={[styles.topGrid, layout.isTablet ? styles.topGridTablet : null]}>
+          <View style={[styles.hero, layout.isTablet ? styles.heroTablet : null]}>
+            <Text style={styles.id}>#{id || "N/A"}</Text>
+            <Text style={styles.name}>{fullName}</Text>
+            <Text style={styles.meta}>Purchase: {formatDate(completedAt)}</Text>
+            <Text style={styles.meta}>Created: {formatDate(createdAt)}</Text>
+          </View>
 
-        <View style={styles.infoCard}>
-          <Text style={styles.infoLine}>Email: {email}</Text>
-          <Text style={styles.infoLine}>Phone: {phone}</Text>
-          <Text style={styles.infoLine}>External Ref: {externalRef}</Text>
+          <View style={[styles.infoCard, layout.isTablet ? styles.infoCardTablet : null]}>
+            <Text style={styles.infoLine}>Email: {email}</Text>
+            <Text style={styles.infoLine}>Phone: {phone}</Text>
+            <Text style={styles.infoLine}>External Ref: {externalRef}</Text>
+          </View>
         </View>
 
         <View style={styles.ordersHeader}>
@@ -114,51 +119,53 @@ export default function GuestDetailScreen() {
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {!loading && !error && orders.length === 0 ? <Text style={styles.empty}>No orders for this guest.</Text> : null}
 
-        {orders.map((order) => (
-          <Pressable
-            key={order.id}
-            style={styles.orderCard}
-            onPress={async () => {
-              setOpeningOrderId(order.id);
-              let resolved = order;
-              try {
-                const fetched = await getOrderByIdMinimal(order.id, tenantId);
-                if (fetched) resolved = fetched;
-              } catch {
-                // Keep list row payload as fallback.
-              } finally {
-                setOpeningOrderId(null);
-              }
-
-              cacheOrder(resolved);
-              router.push({
-                pathname: "/order/[id]",
-                params: {
-                  id: resolved.id,
-                  guestName: resolved.guestName,
-                  product: resolved.product,
-                  quantity: String(resolved.quantity),
-                  totalPrice: resolved.totalPrice === null ? "" : String(resolved.totalPrice),
-                  currency: resolved.currency ?? "",
-                  status: resolved.status,
-                  date: resolved.date,
-                  startDate: resolved.startDate ?? "",
-                  tenantId: tenantId ?? "",
-                  lookupMode: "minimal"
+        <View style={styles.ordersGrid}>
+          {orders.map((order) => (
+            <Pressable
+              key={order.id}
+              style={[styles.orderCard, { width: orderCardWidth }]}
+              onPress={async () => {
+                setOpeningOrderId(order.id);
+                let resolved = order;
+                try {
+                  const fetched = await getOrderByIdMinimal(order.id, tenantId);
+                  if (fetched) resolved = fetched;
+                } catch {
+                  // Keep list row payload as fallback.
+                } finally {
+                  setOpeningOrderId(null);
                 }
-              });
-            }}
-          >
-            <Text style={styles.orderId}>#{order.id}</Text>
-            <Text style={styles.orderMeta}>Purchase: {formatDate(order.date)}</Text>
-            {order.startDate ? <Text style={styles.orderMeta}>Start: {formatDate(order.startDate)}</Text> : null}
-            <Text style={styles.orderMeta}>Qty: {order.productCount}</Text>
-            <Text style={styles.orderMeta}>
-              Price: {order.totalPrice !== null ? `${order.totalPrice}${order.currency ? ` ${order.currency}` : ""}` : "-"}
-            </Text>
-            {openingOrderId === order.id ? <Text style={styles.opening}>Opening order...</Text> : null}
-          </Pressable>
-        ))}
+
+                cacheOrder(resolved);
+                router.push({
+                  pathname: "/order/[id]",
+                  params: {
+                    id: resolved.id,
+                    guestName: resolved.guestName,
+                    product: resolved.product,
+                    quantity: String(resolved.quantity),
+                    totalPrice: resolved.totalPrice === null ? "" : String(resolved.totalPrice),
+                    currency: resolved.currency ?? "",
+                    status: resolved.status,
+                    date: resolved.date,
+                    startDate: resolved.startDate ?? "",
+                    tenantId: tenantId ?? "",
+                    lookupMode: "minimal"
+                  }
+                });
+              }}
+            >
+              <Text style={styles.orderId}>#{order.id}</Text>
+              <Text style={styles.orderMeta}>Purchase: {formatDate(order.date)}</Text>
+              {order.startDate ? <Text style={styles.orderMeta}>Start: {formatDate(order.startDate)}</Text> : null}
+              <Text style={styles.orderMeta}>Qty: {order.productCount}</Text>
+              <Text style={styles.orderMeta}>
+                Price: {order.totalPrice !== null ? `${order.totalPrice}${order.currency ? ` ${order.currency}` : ""}` : "-"}
+              </Text>
+              {openingOrderId === order.id ? <Text style={styles.opening}>Opening order...</Text> : null}
+            </Pressable>
+          ))}
+        </View>
       </ScrollView>
     </AppShell>
   );
@@ -167,6 +174,16 @@ export default function GuestDetailScreen() {
 const styles = StyleSheet.create({
   content: {
     paddingBottom: 16
+  },
+  contentTablet: {
+    paddingBottom: 24
+  },
+  topGrid: {
+    gap: 10
+  },
+  topGridTablet: {
+    flexDirection: "row",
+    alignItems: "stretch"
   },
   back: {
     alignSelf: "flex-start",
@@ -190,6 +207,10 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 10
   },
+  heroTablet: {
+    flex: 1.1,
+    marginBottom: 0
+  },
   id: {
     color: "#cc3f97",
     fontWeight: "700",
@@ -212,6 +233,10 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
     backgroundColor: "#fff"
+  },
+  infoCardTablet: {
+    flex: 0.9,
+    marginBottom: 0
   },
   infoLine: {
     color: theme.colors.text,
@@ -258,6 +283,11 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     padding: 12,
     marginBottom: 8
+  },
+  ordersGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
   },
   orderId: {
     color: "#cc3f97",

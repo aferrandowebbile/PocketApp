@@ -1,24 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { router } from "expo-router";
-import { ActivityIndicator, Image, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { AppShell } from "@/components/AppShell";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { theme } from "@/constants/theme";
+import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useAuth } from "@/lib/auth";
-import { listNotifications } from "@/services/db/notifications";
-import { listArrivalsToday } from "@/services/db/commerce";
-
-type ProfileStats = {
-  unreadNotifications: number;
-  arrivalsToday: number;
-  validationsToday: number;
-};
-
-const initialStats: ProfileStats = {
-  unreadNotifications: 0,
-  arrivalsToday: 0,
-  validationsToday: 0
-};
 
 function titleCase(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -26,9 +13,7 @@ function titleCase(value: string) {
 
 export default function ProfileScreen() {
   const { profile, user, signOut, sites, selectedSiteAlias, selectSite } = useAuth();
-  const [stats, setStats] = useState<ProfileStats>(initialStats);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const layout = useResponsiveLayout();
   const [siteModalOpen, setSiteModalOpen] = useState(false);
   const [siteBusy, setSiteBusy] = useState(false);
 
@@ -44,44 +29,9 @@ export default function ProfileScreen() {
     return `https://ui-avatars.com/api/?name=${encoded}&background=fcb4e0&color=3d0f35&size=256`;
   }, [fullName, user?.user_metadata]);
 
-  const loadProfileStats = useCallback(async () => {
-    if (!profile?.company_id) return;
-    const todayIso = new Date().toISOString().slice(0, 10);
-
-    const [notificationsResult, arrivalsResult] = await Promise.all([
-      listNotifications(profile.company_id, profile.id).catch(() => []),
-      listArrivalsToday(profile.company_id, todayIso).catch(() => [])
-    ]);
-
-    const unreadNotifications = notificationsResult.filter((item) => !item.read_at).length;
-    const validationsToday = 0;
-
-    setStats({
-      unreadNotifications,
-      arrivalsToday: arrivalsResult.length,
-      validationsToday
-    });
-  }, [profile?.company_id, profile?.id]);
-
-  useEffect(() => {
-    setLoading(true);
-    loadProfileStats()
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
-  }, [loadProfileStats]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadProfileStats().catch(() => undefined);
-    setRefreshing(false);
-  }, [loadProfileStats]);
-
   return (
     <AppShell title="Profile">
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.accentDark} />}
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={layout.isTablet ? styles.contentTablet : undefined}>
         <View style={styles.hero}>
           <View style={styles.heroGlowLarge} />
           <View style={styles.heroGlowSmall} />
@@ -92,25 +42,6 @@ export default function ProfileScreen() {
             <Text style={styles.badgeText}>{titleCase(profile?.role ?? "viewer")}</Text>
           </View>
           <Text style={styles.company}>Company {profile?.company_id ?? "-"}</Text>
-        </View>
-
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Unread</Text>
-            <Text style={styles.statValue}>{loading ? "-" : stats.unreadNotifications}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Arrivals</Text>
-            <Text style={styles.statValue}>{loading ? "-" : stats.arrivalsToday}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Checks</Text>
-            <Text style={styles.statValue}>{loading ? "-" : stats.validationsToday}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Role</Text>
-            <Text style={styles.statValue}>{titleCase(profile?.role ?? "viewer")}</Text>
-          </View>
         </View>
 
         <View style={styles.section}>
@@ -136,22 +67,6 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <Pressable style={styles.action}>
-            <Text style={styles.actionTitle}>Profile settings</Text>
-            <Text style={styles.actionSubtitle}>Update personal details and preferences</Text>
-          </Pressable>
-          <Pressable style={styles.action}>
-            <Text style={styles.actionTitle}>Notifications</Text>
-            <Text style={styles.actionSubtitle}>Review unread alerts and operation updates</Text>
-          </Pressable>
-          <Pressable style={styles.action}>
-            <Text style={styles.actionTitle}>Access level</Text>
-            <Text style={styles.actionSubtitle}>Role-based permissions: {titleCase(profile?.role ?? "viewer")}</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Site</Text>
           <View style={styles.row}>
             <Text style={styles.label}>Selected alias</Text>
@@ -168,13 +83,11 @@ export default function ProfileScreen() {
             </Text>
           </Pressable>
         </View>
-
-        {loading ? <ActivityIndicator color={theme.colors.accentDark} style={styles.loader} /> : null}
         <PrimaryButton label="Sign out" onPress={() => signOut().catch(() => undefined)} />
       </ScrollView>
       <Modal visible={siteModalOpen} transparent animationType="fade" onRequestClose={() => setSiteModalOpen(false)}>
         <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+          <View style={[styles.modalCard, { maxWidth: layout.modalMaxWidth, alignSelf: "center", width: "100%" }]}>
             <Text style={styles.siteKicker}>Site Access</Text>
             <Text style={styles.modalTitle}>Choose a site</Text>
             <Text style={styles.modalSubtitle}>This site will be used as the Connect API client for orders, guests, commerce, and scans.</Text>
@@ -220,12 +133,15 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  contentTablet: {
+    paddingBottom: 20
+  },
   hero: {
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    borderRadius: 24,
-    padding: 20,
-    marginBottom: 12,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 10,
     alignItems: "center",
     backgroundColor: "#ffffff",
     overflow: "hidden"
@@ -249,15 +165,15 @@ const styles = StyleSheet.create({
     left: -50
   },
   avatar: {
-    width: 96,
-    height: 96,
+    width: 72,
+    height: 72,
     borderRadius: 999,
-    borderWidth: 3,
+    borderWidth: 2,
     borderColor: "#fff"
   },
   name: {
-    marginTop: 10,
-    fontSize: 26,
+    marginTop: 8,
+    fontSize: 22,
     fontWeight: "800",
     color: theme.colors.text
   },
@@ -279,48 +195,24 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   company: {
-    marginTop: 10,
+    marginTop: 8,
     color: theme.colors.mutedText
-  },
-  statsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 12
-  },
-  statCard: {
-    width: "48.5%",
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 16,
-    padding: 14,
-    backgroundColor: "#fff"
-  },
-  statLabel: {
-    color: theme.colors.mutedText,
-    fontSize: 12
-  },
-  statValue: {
-    marginTop: 6,
-    color: theme.colors.text,
-    fontSize: 22,
-    fontWeight: "800"
   },
   section: {
     borderWidth: 1,
     borderColor: theme.colors.border,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10
   },
   sectionTitle: {
     color: theme.colors.text,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "800",
-    marginBottom: 10
+    marginBottom: 8
   },
   row: {
-    marginTop: 8
+    marginTop: 6
   },
   label: {
     color: theme.colors.mutedText,
@@ -334,8 +226,8 @@ const styles = StyleSheet.create({
   action: {
     borderWidth: 1,
     borderColor: "#f2e4ee",
-    borderRadius: 14,
-    padding: 12,
+    borderRadius: 12,
+    padding: 10,
     marginTop: 8,
     backgroundColor: "#fffafc"
   },
@@ -347,9 +239,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
     color: theme.colors.mutedText,
     fontSize: 12
-  },
-  loader: {
-    marginBottom: 12
   },
   modalBackdrop: {
     flex: 1,

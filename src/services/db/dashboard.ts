@@ -14,6 +14,8 @@ export type OperatorDashboard = {
   status: "on_track" | "at_risk";
   totalRevenue: number;
   currency: string | null;
+  totalGuests: number;
+  totalProductsSold: number;
   mobileRevenue: number;
   desktopRevenue: number;
   arrivalsExpected: number;
@@ -40,6 +42,10 @@ type ExportMetric = {
   currency?: string;
   num_orders?: number;
   num_products?: number;
+  num_customers?: number;
+  num_guests?: number;
+  customers?: number;
+  guests?: number;
   daily?: Record<string, ExportMetric | null>;
 };
 
@@ -92,6 +98,12 @@ function mapExportToDashboard(payload: OrdersExportPayload): OperatorDashboard {
   const totalRevenue = asNumber(all.total);
   const orderCount = asNumber(all.num_orders);
   const productCount = asNumber(all.num_products);
+  const guestCount =
+    asNumber(all.num_customers) ||
+    asNumber(all.num_guests) ||
+    asNumber(all.customers) ||
+    asNumber(all.guests) ||
+    orderCount;
   const mobileRevenue = asNumber(payload.mobile?.total);
   const desktopRevenue = asNumber(payload.desktop?.total);
   const channelTotal = mobileRevenue + desktopRevenue;
@@ -100,6 +112,8 @@ function mapExportToDashboard(payload: OrdersExportPayload): OperatorDashboard {
     status: orderCount > 0 ? "on_track" : "at_risk",
     totalRevenue,
     currency: all.currency ?? topProduct?.currency ?? null,
+    totalGuests: guestCount,
+    totalProductsSold: productCount,
     mobileRevenue,
     desktopRevenue,
     arrivalsExpected: productCount,
